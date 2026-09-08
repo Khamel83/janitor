@@ -92,6 +92,27 @@ class TestSweepDocs(GatewayTestCase):
         self.assertTrue((repo / "TODO.draft.md").exists())
         self.assertFalse((repo / "CONTEXT.md").exists())
 
+    def test_creating_claude_symlink_does_not_block_first_commit(self):
+        """Regression: creating CLAUDE.md made the tree look dirty, forcing draft
+        mode on every first sweep of a repo with AGENTS.md but no CLAUDE.md yet."""
+        _write_fake_gateway(self.bin_dir, '{"context_md":"# Context\\nfake","todo_md":"# TODO\\n- [ ] fake"}')
+        repo = _git_repo(self.tmp)
+        (repo / "AGENTS.md").write_text("rules\n")
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add agents"], cwd=repo, check=True)
+
+        result = sweep_docs(project_dir=str(repo))
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["committed"])
+        self.assertFalse(result["dirty_tree"])
+        self.assertTrue((repo / "CLAUDE.md").is_symlink())
+        self.assertTrue((repo / "CONTEXT.md").exists())
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+        ).stdout
+        self.assertEqual(status.strip(), "", "symlink + docs should all be committed, not left dirty")
+
 
 class TestEnsureClaudeSymlink(GatewayTestCase):
     def test_creates_symlink_when_missing(self):

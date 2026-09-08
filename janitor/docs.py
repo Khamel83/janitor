@@ -171,12 +171,16 @@ def sweep_docs(project_dir: Optional["str | Path"] = None, dry_run: bool = False
     if not (repo / ".git").exists():
         return {"status": "not_a_repo"}
 
-    ensure_claude_symlink(repo)
-
+    # Check the real, pre-existing repo state before janitor makes any
+    # changes of its own (the CLAUDE.md symlink below) — otherwise creating
+    # that symlink would make an otherwise-quiet repo look dirty just from
+    # janitor's own bookkeeping, and a quiet repo stays untouched entirely.
     status = _sh(["git", "status", "--porcelain"], repo)
     commits_24h = _sh(["git", "log", "--since=24.hours", "--oneline"], repo)
     if not status and not commits_24h:
         return {"status": "quiet"}
+
+    ensure_claude_symlink(repo)
 
     branch = _sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo)
     current_sha = _sh(["git", "rev-parse", "--short", "HEAD"], repo)
@@ -218,8 +222,12 @@ def sweep_docs(project_dir: Optional["str | Path"] = None, dry_run: bool = False
     # Re-check the working tree now, right before deciding where to write and
     # whether to commit — the model call above can take seconds, and a status
     # snapshot from before it started is stale by the time we act on it.
+    # CLAUDE.md is janitor's own bookkeeping (ensure_claude_symlink above),
+    # not user work-in-progress, so its presence alone shouldn't force draft
+    # mode — filter it out before deciding whether the tree is "dirty".
     fresh_status_lines = _sh(["git", "status", "--porcelain"], repo).splitlines()
-    is_dirty = bool(fresh_status_lines)
+    user_dirty_lines = [line for line in fresh_status_lines if line[3:] != "CLAUDE.md"]
+    is_dirty = bool(user_dirty_lines)
 
     target_context = repo / ("CONTEXT.draft.md" if is_dirty else "CONTEXT.md")
     target_todo = repo / ("TODO.draft.md" if is_dirty else "TODO.md")
@@ -231,11 +239,14 @@ def sweep_docs(project_dir: Optional["str | Path"] = None, dry_run: bool = False
         # One status check, taken after the write: covers both a modified
         # tracked file (" M CONTEXT.md") and a brand-new one ("?? CONTEXT.md")
         # the same way, so a first-ever sweep (no CONTEXT.md/TODO.md yet)
-        # commits just like a routine update does.
+        # commits just like a routine update does. CLAUDE.md is included so
+        # a freshly-created symlink gets committed alongside the docs it was
+        # created for, instead of being left uncommitted every run.
         post_write = [line[3:] for line in _sh(["git", "status", "--porcelain"], repo).splitlines() if line.strip()]
-        allowed = {"CONTEXT.md", "TODO.md"}
+        allowed = {"CONTEXT.md", "TODO.md", "CLAUDE.md"}
         if post_write and all(f in allowed for f in post_write):
-            subprocess.run(["git", "add", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
+            add_targets = [f for f in ("CONTEXT.md", "TODO.md", "CLAUDE.md") if f in post_write]
+            subprocess.run(["git", "add", *add_targets], cwd=str(repo), check=True)
             # Verify exactly what got staged before committing — closes the
             # window between the status read above and this point, however
             # small, rather than trusting that nothing changed in between.
@@ -247,7 +258,7 @@ def sweep_docs(project_dir: Optional["str | Path"] = None, dry_run: bool = False
                 )
                 committed = True
             else:
-                subprocess.run(["git", "reset", "HEAD", "--", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
+                subprocess.run(["git", "reset", "HEAD", "--", *add_targets], cwd=str(repo), check=True)
 
     return {
         "status": "ok",

@@ -154,6 +154,10 @@ themselves. `overview` never auto-commits at all, on any branch — review
   even though the probe itself and the model call are two separate opt-in steps.
 - Mirrors the generated overview to `$JANITOR_DOCS_MIRROR/repos/<repo-name>.md` if that
   env var is set, in addition to (never instead of) the repo's own `LLM-OVERVIEW.md`.
+  **Two repos with the same directory name but different paths** (e.g. `~/work/api` and
+  `~/side-projects/api`) will collide in the mirror and silently overwrite each other —
+  the mirror key is the directory's basename, not its full path. Keep mirrored repo names
+  distinct, or don't rely on the mirror for repos that share a name.
 
 Run these from cron/launchd (e.g. `janitor sweep` nightly, `janitor overview` weekly —
 see `contrib/launchd/` for macOS templates) or by hand.

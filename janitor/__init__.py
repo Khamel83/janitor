@@ -22,6 +22,7 @@ from janitor.jobs import (
     mine_patterns,
     generate_onboarding_summary,
 )
+from janitor.docs import sweep_docs, generate_overview
 
 __all__ = [
     "SessionRecorder",
@@ -39,4 +40,6 @@ __all__ = [
     "enrich_commit_messages",
     "mine_patterns",
     "generate_onboarding_summary",
+    "sweep_docs",
+    "generate_overview",
 ]

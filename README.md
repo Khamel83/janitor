@@ -124,6 +124,23 @@ janitor/
 | File Change Analysis | 1 call | After commits | Categorizes changes, identifies hotspots |
 | Memory Hygiene | 1 call | Daily | Overlapping memory files to merge |
 
+## On-Demand: Doc Sweeps
+
+Besides the always-on hook/cron jobs above, `janitor` also ships a CLI for the two
+jobs you're most likely to want to trigger directly — regenerating high-level docs
+from git activity rather than session events:
+
+```bash
+janitor sweep [repo ...]      # regenerate CONTEXT.md / TODO.md from recent commits + working tree state
+janitor overview [repo ...]   # regenerate LLM-OVERVIEW.md from AGENTS.md + commit history
+```
+
+Both default to the current directory, take `--dry-run` to print instead of write,
+and use the same `openrouter/free` budget as every other job. `sweep` never commits
+into a dirty working tree — it writes `CONTEXT.draft.md`/`TODO.draft.md` instead, and
+only auto-commits on a clean `main`/`master` where the only diff is the two doc files
+themselves. Run these from cron (e.g. `janitor overview` weekly) or by hand.
+
 ## Configuration
 
 Optional environment variables:

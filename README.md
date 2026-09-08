@@ -136,10 +136,32 @@ janitor overview [repo ...]   # regenerate LLM-OVERVIEW.md from AGENTS.md + comm
 ```
 
 Both default to the current directory, take `--dry-run` to print instead of write,
-and use the same `openrouter/free` budget as every other job. `sweep` never commits
+and use the same soft rate budget as every other job. `sweep` never commits
 into a dirty working tree — it writes `CONTEXT.draft.md`/`TODO.draft.md` instead, and
 only auto-commits on a clean `main`/`master` where the only diff is the two doc files
-themselves. Run these from cron (e.g. `janitor overview` weekly) or by hand.
+themselves.
+
+`overview` also:
+- Runs `scripts/status.py` in the target repo, if present, and feeds its output into
+  the LLM-OVERVIEW.md prompt as a live status probe (no such script → no probe section).
+- Mirrors the generated overview to `$JANITOR_DOCS_MIRROR/repos/<repo-name>.md` if that
+  env var is set, in addition to (never instead of) the repo's own `LLM-OVERVIEW.md`.
+
+Run these from cron/launchd (e.g. `janitor sweep` nightly, `janitor overview` weekly —
+see `contrib/launchd/` for macOS templates) or by hand.
+
+## Model Backend
+
+Every job that calls a model — sweep, overview, turn summarizer, commit enricher,
+pattern miner, onboarding summary, memory hygiene — goes through `janitor.worker`,
+which:
+
+1. Uses `g2k-bg`/`g2k` (Gateway2000) if either is on `PATH`.
+2. Otherwise falls back to a direct `openrouter/free` HTTP call — set
+   `OPENROUTER_API_KEY` for this path.
+
+Usage is tracked locally in `.janitor/usage.jsonl` against a soft 1000/day,
+20/minute budget regardless of which backend actually served the request.
 
 ## Configuration
 

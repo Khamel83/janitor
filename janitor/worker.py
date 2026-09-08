@@ -1,10 +1,14 @@
-"""OpenRouter free model caller for janitor tasks.
+"""Model caller for janitor tasks.
 
-Direct HTTP calls to openrouter/free — no SDK dependency.
+Prefers Gateway2000 (`g2k-bg`/`g2k`) when it's on PATH — that's the
+standard model gateway on machines that run janitor. Falls back to a
+direct HTTP call to openrouter/free (no SDK dependency) when no gateway
+CLI is available, e.g. CI or a machine without g2k installed.
+
 Used for bounded extraction/summarization tasks where $0 cost matters
 more than model quality.
 
-Rate limits (openrouter/free):
+Rate limits (soft budget, tracked locally regardless of backend):
   - 1000 requests/day
   - 20 requests/minute
 Tracked via .janitor/usage.jsonl with in-memory caching.
@@ -13,6 +17,8 @@ Tracked via .janitor/usage.jsonl with in-memory caching.
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -164,15 +170,48 @@ def get_usage_stats() -> dict:
     }
 
 
+def _gateway_cli() -> str | None:
+    """Path to g2k-bg/g2k if either is on PATH, else None."""
+    return shutil.which("g2k-bg") or shutil.which("g2k")
+
+
+def _call_gateway(prompt: str, system: str | None, timeout: int) -> str:
+    """Call the local Gateway2000 CLI. Raises RuntimeError on failure."""
+    cli = _gateway_cli()
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    try:
+        res = subprocess.run(
+            [cli, "-p", full_prompt],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{cli} timed out after {timeout}s")
+    if res.returncode != 0:
+        raise RuntimeError(f"{cli} failed (exit {res.returncode}): {res.stderr.strip()[:200]}")
+
+    raw = res.stdout.strip()
+    raw = re.sub(r"^```(?:json|markdown)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    _log_usage(os.path.basename(cli))
+    return raw.strip()
+
+
 def call_free(
     prompt: str,
     system: str | None = None,
     max_tokens: int = 1024,
     timeout: int = 30,
 ) -> str:
-    """Send a prompt to openrouter/free and return the response text."""
+    """Send a prompt to the model gateway and return the response text.
+
+    Uses g2k-bg/g2k when present on PATH; otherwise falls back to a direct
+    openrouter/free HTTP call.
+    """
     if not _check_rate_limit():
         raise RuntimeError("Rate limit reached. Wait before retrying.")
+
+    if _gateway_cli():
+        return _call_gateway(prompt, system, timeout)
 
     api_key = _get_api_key()
 

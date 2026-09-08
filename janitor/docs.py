@@ -1,12 +1,14 @@
 """Documentation reconciler — sweep and overview jobs.
 
 Regenerates CONTEXT.md/TODO.md from recent git activity ("sweep"), and
-LLM-OVERVIEW.md from AGENTS.md + git history ("overview"). Uses
-openrouter/free via janitor.worker — same $0 budget and rate limiting as
-every other job in this package. No hardcoded repo paths: pass a
-project_dir, or run from inside the repo.
+LLM-OVERVIEW.md from AGENTS.md + git history + a live status probe
+("overview"). Uses janitor.worker's model gateway (g2k-bg when present,
+openrouter/free otherwise) — same $0 budget and rate limiting as every
+other job in this package. No hardcoded repo paths: pass a project_dir,
+or run from inside the repo.
 """
 
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +64,9 @@ DATE: {date}
 AGENTS.MD (CONSTITUTION & VOCABULARY):
 {agents_text}
 
+LIVE STATUS PROBE OUTPUT:
+{status_output}
+
 RECENT COMMITS (last 20):
 {recent_commits}
 
@@ -72,8 +77,9 @@ RULES:
 1. Header MUST be:
    # LLM-OVERVIEW — {repo_name}
    > Current compressed briefing. Updated {date}. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
-2. If AGENTS.md names words to avoid or retired projects/features, purge them or note them as retired history. Do not describe planned/stranded work as active production unless backed by evidence in the commit log.
-3. Required sections: ## What this repo is / ## What is actually built / ## Canonical entry points.
+2. If AGENTS.md names words to avoid or retired projects/features, purge them or note them as retired history. Do not describe planned/stranded work as active production unless backed by evidence in the commit log or the status probe.
+3. Required sections: ## What this repo is / ## Machine & Host Ownership / ## What is actually built / ## Canonical entry points.
+   - Machine & Host Ownership: state which machine(s) this repo actually runs on, using only the status probe output and AGENTS.md. If there is no multi-host information available, write one line saying so — do not invent hosts.
 4. Keep it dense (~80-150 lines).
 """
 
@@ -186,8 +192,49 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
     }
 
 
+def get_live_status(repo: Path) -> str:
+    """Run scripts/status.py in the target repo if present, and return its stdout.
+
+    Convention, not requirement: any repo can drop a `scripts/status.py` that
+    prints whatever live state (ports, host, running services) it wants
+    surfaced in LLM-OVERVIEW.md. No status script -> no probe section.
+    """
+    probe = repo / "scripts" / "status.py"
+    if not probe.exists():
+        return "(No repo status probe configured — add scripts/status.py to enable one)"
+    r = subprocess.run(
+        ["python3", str(probe)], capture_output=True, text=True, cwd=str(repo), timeout=15,
+    )
+    if r.returncode != 0:
+        return f"(Status probe error: {r.stderr.strip()[:300]})"
+    return r.stdout.strip() or "(Status probe produced no output)"
+
+
+def _mirror_overview(repo: Path, overview_text: str) -> Optional[str]:
+    """Mirror LLM-OVERVIEW.md into a central docs repo, if JANITOR_DOCS_MIRROR is set.
+
+    JANITOR_DOCS_MIRROR points at a directory (typically another git repo);
+    the mirror is written to <mirror>/repos/<repo_name>.md, alongside the
+    repo's own copy — never instead of it.
+    """
+    mirror_root = os.environ.get("JANITOR_DOCS_MIRROR")
+    if not mirror_root:
+        return None
+    mirror_dir = Path(mirror_root).expanduser()
+    if not mirror_dir.exists():
+        return None
+    mirror_path = mirror_dir / "repos" / f"{repo.name}.md"
+    mirror_path.parent.mkdir(parents=True, exist_ok=True)
+    mirror_path.write_text(overview_text)
+    return str(mirror_path)
+
+
 def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) -> dict:
-    """Regenerate LLM-OVERVIEW.md from AGENTS.md and recent git history."""
+    """Regenerate LLM-OVERVIEW.md from AGENTS.md, git history, and a live status probe.
+
+    Always writes the repo's own copy first. If JANITOR_DOCS_MIRROR is set,
+    also mirrors a copy there — the repo's copy is the source of truth either way.
+    """
     repo = _project_dir(project_dir)
     if not (repo / ".git").exists():
         return {"status": "not_a_repo"}
@@ -202,16 +249,21 @@ def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) 
     agents_text = agents_file.read_text() if agents_file.exists() else "(No AGENTS.md present)"
     curr_overview = overview_file.read_text() if overview_file.exists() else "(No previous LLM-OVERVIEW.md)"
     recent_commits = _sh(["git", "log", "-n", "20", "--oneline"], repo)
+    status_output = get_live_status(repo)
 
     prompt = OVERVIEW_PROMPT.format(
         repo_name=repo.name,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         agents_text=agents_text,
+        status_output=status_output,
         recent_commits=recent_commits or "(No commits found)",
         curr_overview=curr_overview,
     )
 
-    new_overview = call_free(prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=45).strip() + "\n"
+    try:
+        new_overview = call_free(prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=45).strip() + "\n"
+    except RuntimeError as e:
+        return {"status": "synthesis_failed", "raw": str(e)}
 
     if dry_run:
         return {"status": "dry_run", "overview_md": new_overview, "path": str(overview_file.relative_to(repo))}
@@ -219,4 +271,9 @@ def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) 
     overview_file.parent.mkdir(parents=True, exist_ok=True)
     overview_file.write_text(new_overview)
 
-    return {"status": "ok", "wrote": str(overview_file.relative_to(repo))}
+    mirrored_to = _mirror_overview(repo, new_overview)
+
+    result = {"status": "ok", "wrote": str(overview_file.relative_to(repo))}
+    if mirrored_to:
+        result["mirrored_to"] = mirrored_to
+    return result

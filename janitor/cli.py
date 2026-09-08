@@ -29,7 +29,10 @@ def _run(fn, repos: list[Path], dry_run: bool, label: str) -> int:
                 if key in ("context_md", "todo_md", "overview_md"):
                     print(f"\n--- [DRY RUN {key}: {repo}] ---\n{val}")
         elif status == "ok":
-            print(f"[+] {repo}: wrote {result.get('wrote')}" + (" (committed)" if result.get("committed") else ""))
+            extra = " (committed)" if result.get("committed") else ""
+            if result.get("mirrored_to"):
+                extra += f" (mirrored to {result['mirrored_to']})"
+            print(f"[+] {repo}: wrote {result.get('wrote')}{extra}")
         else:
             print(f"[!] {repo}: {label} failed: {result}", file=sys.stderr)
             exit_code = 1

@@ -123,8 +123,11 @@ RECENT COMMITS (last 20):
 CURRENT LLM-OVERVIEW.MD:
 {curr_overview}
 
-CODEBASE STRUCTURE (TOP-LEVEL ENTRIES):
+CODEBASE STRUCTURE (DIRECTORY TREE):
 {top_entries}
+
+SOURCE CODE & CONFIG SAMPLES (GROUND TRUTH):
+{code_samples}
 <<< END REPO CONTENT
 
 RULES:
@@ -133,8 +136,9 @@ RULES:
    > Current compressed briefing. Updated {date}. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
 2. If AGENTS.md names words to avoid or retired projects/features, purge them or note them as retired history. Do not describe planned/stranded work as active production unless backed by evidence in the commit log or the status probe.
 3. Required sections, each starting on its own line, in this order: ## What this repo is / ## Machine & Host Ownership / ## What is actually built / ## Canonical entry points.
-   - Machine & Host Ownership: state which machine(s) this repo actually runs on, using only the status probe output and AGENTS.md. If there is no multi-host information available, write one line saying so — do not invent hosts.
-4. Provide comprehensive, detailed architectural analysis covering all subsystems, modules, and entry points. Be thorough and specific, not brief.
+   - Machine & Host Ownership: state which machine(s) this repo actually runs on, using only the status probe output, code configurations, and AGENTS.md. If there is no multi-host information available, write one line saying so — do not invent hosts.
+   - What is actually built: Ground this directly in the actual source code, routes, database tables, and configuration files observed above. Detail the actual modules, services, API routes, data models, and dependencies.
+4. Provide comprehensive, detailed architectural analysis covering all subsystems, modules, and entry points. Ground every claim in the actual code files and configs, never generic assumptions.
 """
 
 REQUIRED_OVERVIEW_SECTIONS = (
@@ -481,16 +485,59 @@ def overview_repo(
 
     if agents_file.exists():
         agents_text = agents_file.read_text(encoding="utf-8")
-    elif (repo_dir / "README.md").exists():
-        agents_text = f"(From README.md):\n{(repo_dir / 'README.md').read_text(encoding='utf-8')}"
     else:
-        agents_text = "(No AGENTS.md or README.md present)"
+        agents_text = "(No AGENTS.md present)"
+
+    # Ground truth codebase extraction: collect configs, package specs, and core source headers
+    code_samples_list = []
+    key_configs = [
+        "homelab.yaml", "pyproject.toml", "package.json", "docker-compose.yml",
+        "Cargo.toml", "go.mod", "Makefile", "README.md"
+    ]
+    for cfg_name in key_configs:
+        cfg_path = repo_dir / cfg_name
+        if cfg_path.exists():
+            try:
+                content = cfg_path.read_text(encoding="utf-8")[:1500]
+                code_samples_list.append(f"--- File: {cfg_name} ---\n{content}\n")
+            except Exception:
+                pass
+
+    # Find representative source files across common languages
+    source_exts = {".py", ".ts", ".js", ".go", ".rs", ".sql"}
+    found_sources = 0
+    for root, dirs, files in os.walk(repo_dir):
+        if ".git" in root.split(os.sep) or "node_modules" in root.split(os.sep) or ".venv" in root.split(os.sep):
+            continue
+        for f in files:
+            ext = Path(f).suffix
+            if ext in source_exts and found_sources < 6:
+                fpath = Path(root) / f
+                rel_path = fpath.relative_to(repo_dir)
+                try:
+                    head_content = fpath.read_text(encoding="utf-8")[:1000]
+                    code_samples_list.append(f"--- File: {rel_path} ---\n{head_content}\n")
+                    found_sources += 1
+                except Exception:
+                    pass
+
+    code_samples = "\n".join(code_samples_list)
 
     curr_overview = overview_file.read_text(encoding="utf-8") if overview_file.exists() else "(No previous LLM-OVERVIEW.md)"
     recent_commits = _git_log(repo_dir, n=20)
     status_output = _live_status_probe(repo_dir)
+    # Build a 2-level directory tree representation
+    tree_entries = []
     try:
-        top_entries = ", ".join(sorted([p.name for p in repo_dir.iterdir() if not p.name.startswith(".")][:35]))
+        for item in sorted(repo_dir.iterdir()):
+            if item.name.startswith("."):
+                continue
+            if item.is_dir():
+                children = [c.name for c in sorted(item.iterdir()) if not c.name.startswith(".")][:10]
+                tree_entries.append(f"{item.name}/ ({', '.join(children)})")
+            else:
+                tree_entries.append(item.name)
+        top_entries = "\n".join(tree_entries[:40])
     except Exception:
         top_entries = ""
     prompt = OVERVIEW_PROMPT.format(
@@ -501,8 +548,9 @@ def overview_repo(
         recent_commits=_capped(recent_commits),
         curr_overview=_capped(curr_overview),
         top_entries=top_entries,
+        code_samples=_capped(code_samples, 12000),
     )
-    prompt = _capped(prompt, 24000)
+    prompt = _capped(prompt, 32000)
 
     try:
         new_overview = call_free(

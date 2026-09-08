@@ -423,7 +423,15 @@ def _central_repo_clean(root: Path) -> bool:
         )
     except (subprocess.SubprocessError, OSError):
         return False
-    return res.returncode == 0 and not res.stdout.strip()
+    if res.returncode != 0:
+        return False
+    meaningful_lines = [
+        line for line in res.stdout.splitlines()
+        if not line[3:].startswith("repos")
+        and not line[3:].endswith(".DS_Store")
+        and not line[3:].endswith("Thumbs.db")
+    ]
+    return len(meaningful_lines) == 0
 
 
 def _mirror_overview(repo_dir: Path, overview_text: str) -> Optional[str]:
@@ -486,7 +494,7 @@ def overview_repo(
 
     try:
         new_overview = call_free(
-            prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=45
+            prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=180
         ).strip() + "\n"
     except RuntimeError as e:
         return {"repo": repo_dir.name, "status": "synthesis_failed", "raw": str(e)}

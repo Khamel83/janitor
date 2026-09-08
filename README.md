@@ -139,14 +139,19 @@ Both default to the current directory, take `--dry-run` to print instead of writ
 and use the same soft rate budget as every other job. `sweep` never commits
 into a dirty working tree — it writes `CONTEXT.draft.md`/`TODO.draft.md` instead, and
 only auto-commits on a clean `main`/`master` where the only diff is the two doc files
-themselves.
+themselves. `overview` never auto-commits at all, on any branch — review
+`LLM-OVERVIEW.md` before committing it yourself.
 
 `overview` also:
 - Runs `scripts/status.py` in the target repo, feeding its output into the LLM-OVERVIEW.md
   prompt as a live status probe — but only if `JANITOR_RUN_STATUS_PROBE=1` is set. This
   executes arbitrary code from the target repo with your full privileges, so it's opt-in;
   without it, `overview` only reads files and runs git, safe to point at a repo you don't
-  fully trust.
+  fully trust. **Combined risk:** with the probe on, its output — plus everything else in
+  the prompt (`AGENTS.md`, file contents, commit log) — goes to a model with no enforced
+  boundary between instructions and data on the `g2k-bg`/`g2k` gateway path (see Model
+  Backend below). Don't enable the probe against a repo whose content you don't trust,
+  even though the probe itself and the model call are two separate opt-in steps.
 - Mirrors the generated overview to `$JANITOR_DOCS_MIRROR/repos/<repo-name>.md` if that
   env var is set, in addition to (never instead of) the repo's own `LLM-OVERVIEW.md`.
 

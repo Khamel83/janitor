@@ -113,7 +113,11 @@ REQUIRED_OVERVIEW_SECTIONS = (
 )
 
 
-MAX_PROMPT_FIELD_CHARS = 8000
+MAX_PROMPT_FIELD_CHARS = 4000
+# Several capped fields together can still add up; this is a hard ceiling on
+# the whole assembled prompt, applied right before it goes to the model —
+# independent of how many fields feed into it or how they're capped.
+MAX_TOTAL_PROMPT_CHARS = 16000
 
 
 def _sh(args: list[str], cwd: Path) -> str:
@@ -121,7 +125,7 @@ def _sh(args: list[str], cwd: Path) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _project_dir(project_dir: Optional[str]) -> Path:
+def _project_dir(project_dir: Optional["str | Path"]) -> Path:
     return Path(project_dir).resolve() if project_dir else Path.cwd().resolve()
 
 
@@ -132,7 +136,7 @@ def _capped(text: str, limit: int = MAX_PROMPT_FIELD_CHARS) -> str:
     return text[:limit] + f"\n... [truncated, {len(text) - limit} more chars]"
 
 
-def ensure_claude_symlink(project_dir: Optional[str] = None) -> bool:
+def ensure_claude_symlink(project_dir: Optional["str | Path"] = None) -> bool:
     """Point CLAUDE.md at AGENTS.md if AGENTS.md exists.
 
     Never deletes a real CLAUDE.md — only replaces a missing file or an
@@ -156,7 +160,7 @@ def ensure_claude_symlink(project_dir: Optional[str] = None) -> bool:
     return True
 
 
-def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict:
+def sweep_docs(project_dir: Optional["str | Path"] = None, dry_run: bool = False) -> dict:
     """Regenerate CONTEXT.md and TODO.md from recent git activity.
 
     Never commits into a dirty working tree — writes CONTEXT.draft.md /
@@ -195,6 +199,7 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
         curr_context=_capped(curr_context),
         curr_todo=_capped(curr_todo),
     )
+    prompt = _capped(prompt, MAX_TOTAL_PROMPT_CHARS)
 
     result = extract_structured(
         prompt,
@@ -296,11 +301,15 @@ def _mirror_overview(repo: Path, overview_text: str) -> Optional[str]:
     return str(mirror_path)
 
 
-def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) -> dict:
+def generate_overview(project_dir: Optional["str | Path"] = None, dry_run: bool = False) -> dict:
     """Regenerate LLM-OVERVIEW.md from AGENTS.md, git history, and a live status probe.
 
     Always writes the repo's own copy first. If JANITOR_DOCS_MIRROR is set,
     also mirrors a copy there — the repo's copy is the source of truth either way.
+
+    Unlike sweep_docs(), this never auto-commits — LLM-OVERVIEW.md is meant
+    to be reviewed before it lands in history, not committed unattended on
+    a schedule. Commit it yourself once you're happy with it.
     """
     repo = _project_dir(project_dir)
     if not (repo / ".git").exists():
@@ -336,6 +345,7 @@ def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) 
         recent_commits=recent_commits or "(No commits found)",
         curr_overview=_capped(curr_overview),
     )
+    prompt = _capped(prompt, MAX_TOTAL_PROMPT_CHARS)
 
     try:
         new_overview = call_free(prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=45).strip() + "\n"

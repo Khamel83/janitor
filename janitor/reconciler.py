@@ -123,6 +123,8 @@ RECENT COMMITS (last 20):
 CURRENT LLM-OVERVIEW.MD:
 {curr_overview}
 
+CODEBASE STRUCTURE (TOP-LEVEL ENTRIES):
+{top_entries}
 <<< END REPO CONTENT
 
 RULES:
@@ -132,7 +134,7 @@ RULES:
 2. If AGENTS.md names words to avoid or retired projects/features, purge them or note them as retired history. Do not describe planned/stranded work as active production unless backed by evidence in the commit log or the status probe.
 3. Required sections, each starting on its own line, in this order: ## What this repo is / ## Machine & Host Ownership / ## What is actually built / ## Canonical entry points.
    - Machine & Host Ownership: state which machine(s) this repo actually runs on, using only the status probe output and AGENTS.md. If there is no multi-host information available, write one line saying so — do not invent hosts.
-4. Keep it dense (~80-150 lines).
+4. Provide comprehensive, detailed architectural analysis covering all subsystems, modules, and entry points. Be thorough and specific, not brief.
 """
 
 REQUIRED_OVERVIEW_SECTIONS = (
@@ -477,11 +479,20 @@ def overview_repo(
     agents_file = repo_dir / "AGENTS.md"
     overview_file = _overview_location(repo_dir)
 
-    agents_text = agents_file.read_text(encoding="utf-8") if agents_file.exists() else "(No AGENTS.md present)"
+    if agents_file.exists():
+        agents_text = agents_file.read_text(encoding="utf-8")
+    elif (repo_dir / "README.md").exists():
+        agents_text = f"(From README.md):\n{(repo_dir / 'README.md').read_text(encoding='utf-8')}"
+    else:
+        agents_text = "(No AGENTS.md or README.md present)"
+
     curr_overview = overview_file.read_text(encoding="utf-8") if overview_file.exists() else "(No previous LLM-OVERVIEW.md)"
     recent_commits = _git_log(repo_dir, n=20)
     status_output = _live_status_probe(repo_dir)
-
+    try:
+        top_entries = ", ".join(sorted([p.name for p in repo_dir.iterdir() if not p.name.startswith(".")][:35]))
+    except Exception:
+        top_entries = ""
     prompt = OVERVIEW_PROMPT.format(
         repo_name=repo_dir.name,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -489,12 +500,13 @@ def overview_repo(
         status_output=_capped(status_output),
         recent_commits=_capped(recent_commits),
         curr_overview=_capped(curr_overview),
+        top_entries=top_entries,
     )
-    prompt = _capped(prompt, MAX_TOTAL_PROMPT_CHARS)
+    prompt = _capped(prompt, 24000)
 
     try:
         new_overview = call_free(
-            prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=180
+            prompt, system=OVERVIEW_SYSTEM, max_tokens=4096, timeout=180
         ).strip() + "\n"
     except RuntimeError as e:
         return {"repo": repo_dir.name, "status": "synthesis_failed", "raw": str(e)}

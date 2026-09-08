@@ -1,6 +1,7 @@
 <!-- janitor:begin:recent -->
-Active focus is on final acceptance verification of the Janitor repository caretaker system across local and fleet targets. Core module implementation, CLI suite, systemd units, and repository hygiene configuration are complete.
+Active focus is on final acceptance verification of the Janitor repository caretaker system across local and fleet targets. Core module implementation, CLI suite, systemd units, and git operations are complete.
 
+- Fixed `janitor/git_ops.py` to use absolute ISO-8601 `%cI` timestamps for deterministic input hashing (`3295676`).
 - Added root `.gitignore` to un-track compiled bytecode and egg-info build artifacts (`ec95539`).
 - Added homelab systemd timers/services and Mac Mini SSH runner script (`a04c03a`).
 - Implemented `janitor/cli.py` with fleet discovery, workspace auto-tidy, document sweeps, and structured JSON output (`b77d640`).

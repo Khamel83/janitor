@@ -86,7 +86,7 @@ def has_24h_activity(repo_dir: Path) -> Tuple[bool, str, str]:
             "--since=24.hours",
             "--invert-grep",
             "--grep=^Janitor-Run:",
-            "--pretty=format:%h %s (%cr)",
+            "--pretty=format:%h %s %cI",
         ],
         repo_dir,
     )

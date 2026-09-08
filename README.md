@@ -124,6 +124,57 @@ janitor/
 | File Change Analysis | 1 call | After commits | Categorizes changes, identifies hotspots |
 | Memory Hygiene | 1 call | Daily | Overlapping memory files to merge |
 
+## On-Demand: Doc Sweeps
+
+Besides the always-on hook/cron jobs above, `janitor` also ships a CLI for the two
+jobs you're most likely to want to trigger directly — regenerating high-level docs
+from git activity rather than session events:
+
+```bash
+janitor sweep [repo ...]      # regenerate CONTEXT.md / TODO.md from recent commits + working tree state
+janitor overview [repo ...]   # regenerate LLM-OVERVIEW.md from AGENTS.md + commit history
+```
+
+Both default to the current directory, take `--dry-run` to print instead of write,
+and use the same soft rate budget as every other job. `sweep` never commits
+into a dirty working tree — it writes `CONTEXT.draft.md`/`TODO.draft.md` instead, and
+only auto-commits on a clean `main`/`master` where the only diff is the two doc files
+themselves. `overview` never auto-commits at all, on any branch — review
+`LLM-OVERVIEW.md` before committing it yourself.
+
+`overview` also:
+- Runs `scripts/status.py` in the target repo, feeding its output into the LLM-OVERVIEW.md
+  prompt as a live status probe — but only if `JANITOR_RUN_STATUS_PROBE=1` is set. This
+  executes arbitrary code from the target repo with your full privileges, so it's opt-in;
+  without it, `overview` only reads files and runs git, safe to point at a repo you don't
+  fully trust. **Combined risk:** with the probe on, its output — plus everything else in
+  the prompt (`AGENTS.md`, file contents, commit log) — goes to a model with no enforced
+  boundary between instructions and data on the `g2k-bg`/`g2k` gateway path (see Model
+  Backend below). Don't enable the probe against a repo whose content you don't trust,
+  even though the probe itself and the model call are two separate opt-in steps.
+- Mirrors the generated overview to `$JANITOR_DOCS_MIRROR/repos/<repo-name>.md` if that
+  env var is set, in addition to (never instead of) the repo's own `LLM-OVERVIEW.md`.
+  **Two repos with the same directory name but different paths** (e.g. `~/work/api` and
+  `~/side-projects/api`) will collide in the mirror and silently overwrite each other —
+  the mirror key is the directory's basename, not its full path. Keep mirrored repo names
+  distinct, or don't rely on the mirror for repos that share a name.
+
+Run these from cron/launchd (e.g. `janitor sweep` nightly, `janitor overview` weekly —
+see `contrib/launchd/` for macOS templates) or by hand.
+
+## Model Backend
+
+Every job that calls a model — sweep, overview, turn summarizer, commit enricher,
+pattern miner, onboarding summary, memory hygiene — goes through `janitor.worker`,
+which:
+
+1. Uses `g2k-bg`/`g2k` (Gateway2000) if either is on `PATH`.
+2. Otherwise falls back to a direct `openrouter/free` HTTP call — set
+   `OPENROUTER_API_KEY` for this path.
+
+Usage is tracked locally in `.janitor/usage.jsonl` against a soft 1000/day,
+20/minute budget regardless of which backend actually served the request.
+
 ## Configuration
 
 Optional environment variables:

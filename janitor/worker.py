@@ -178,17 +178,20 @@ def _gateway_cli() -> str | None:
 def _call_gateway(cli: str, prompt: str, system: str | None, timeout: int) -> str:
     """Call the local Gateway2000 CLI at `cli`. Raises RuntimeError on failure.
 
-    Known limitation: g2k-bg/g2k take a single `-p` argument, so system and
-    user content are concatenated here rather than sent as separate roles
-    the way the openrouter/free HTTP path does. There's no real instruction/
-    data separation at this layer — callers that pass untrusted repo content
-    in `prompt` should delimit it themselves (see janitor.docs's REPO CONTENT
+    The payload is streamed over stdin (`-p -`) rather than embedded in argv:
+    prompts can exceed the OS ARG_MAX limit, and argv quoting mangles large
+    payloads. g2k-bg/g2k take a single `-p` argument, so system and user
+    content are concatenated here rather than sent as separate roles the way
+    the openrouter/free HTTP path does. There's no real instruction/data
+    separation at this layer — callers that pass untrusted repo content in
+    `prompt` should delimit it themselves (see janitor.docs's REPO CONTENT
     markers) as a best-effort mitigation, not a substitute for role separation.
     """
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     try:
         res = subprocess.run(
-            [cli, "-p", full_prompt],
+            [cli, "-p", "-"],
+            input=full_prompt,
             capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -207,7 +210,7 @@ def call_free(
     prompt: str,
     system: str | None = None,
     max_tokens: int = 1024,
-    timeout: int = 30,
+    timeout: int = 180,
 ) -> str:
     """Send a prompt to the model gateway and return the response text.
 
@@ -285,21 +288,33 @@ def call_free(
     raise RuntimeError(f"openrouter/free failed after 3 attempts: {last_error}")
 
 
+def _json_object(text: str) -> dict | None:
+    """Parse `text` as JSON, returning the object only if it parses to a dict."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def extract_structured(
     prompt: str,
     system: str | None = None,
     schema_hint: str | None = None,
+    timeout: int = 180,
 ) -> dict:
-    """Call free model and parse JSON response.
+    """Call the model and parse its response as a JSON object.
 
-    Tries: direct parse, strip code fences, extract JSON from text,
-    fall back to {"raw": text}.
+    Tries, in order: the raw response, a response wrapped in a markdown code
+    fence (```json, ```markdown or plain ```), then the first JSON object
+    embedded in the text. Anything that doesn't parse to a JSON object falls
+    back to {"raw": text, "status": "unstructured"}.
     """
     if schema_hint:
         prompt += f"\n\nRespond with valid JSON only. No explanation. Expected shape: {schema_hint}"
 
     try:
-        raw = call_free(prompt, system=system, max_tokens=2048, timeout=30)
+        raw = call_free(prompt, system=system, max_tokens=2048, timeout=timeout)
     except RuntimeError as e:
         return {"raw": str(e), "status": "failed"}
 
@@ -308,25 +323,22 @@ def extract_structured(
 
     stripped = raw.strip()
 
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        pass
+    parsed = _json_object(stripped)
+    if parsed is not None:
+        return parsed
 
     if stripped.startswith("```"):
         lines = stripped.split("\n")
         inner = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        try:
-            return json.loads(inner.strip())
-        except json.JSONDecodeError:
-            pass
+        parsed = _json_object(inner.strip())
+        if parsed is not None:
+            return parsed
 
     match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', stripped, re.DOTALL)
     if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+        parsed = _json_object(match.group())
+        if parsed is not None:
+            return parsed
 
-    print("[janitor] Could not parse JSON from free model, returning raw text")
+    print("[janitor] Could not parse JSON from model response, returning raw text")
     return {"raw": stripped, "status": "unstructured"}

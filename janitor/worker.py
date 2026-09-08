@@ -176,7 +176,15 @@ def _gateway_cli() -> str | None:
 
 
 def _call_gateway(cli: str, prompt: str, system: str | None, timeout: int) -> str:
-    """Call the local Gateway2000 CLI at `cli`. Raises RuntimeError on failure."""
+    """Call the local Gateway2000 CLI at `cli`. Raises RuntimeError on failure.
+
+    Known limitation: g2k-bg/g2k take a single `-p` argument, so system and
+    user content are concatenated here rather than sent as separate roles
+    the way the openrouter/free HTTP path does. There's no real instruction/
+    data separation at this layer — callers that pass untrusted repo content
+    in `prompt` should delimit it themselves (see janitor.docs's REPO CONTENT
+    markers) as a best-effort mitigation, not a substitute for role separation.
+    """
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     try:
         res = subprocess.run(

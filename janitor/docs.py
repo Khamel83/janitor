@@ -231,11 +231,18 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
         allowed = {"CONTEXT.md", "TODO.md"}
         if post_write and all(f in allowed for f in post_write):
             subprocess.run(["git", "add", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
-            subprocess.run(
-                ["git", "commit", "-m", f"docs(janitor): sweep CONTEXT.md and TODO.md for {current_sha} [skip ci]"],
-                cwd=str(repo), check=True,
-            )
-            committed = True
+            # Verify exactly what got staged before committing — closes the
+            # window between the status read above and this point, however
+            # small, rather than trusting that nothing changed in between.
+            staged = [f for f in _sh(["git", "diff", "--cached", "--name-only"], repo).splitlines() if f]
+            if staged and all(f in allowed for f in staged):
+                subprocess.run(
+                    ["git", "commit", "-m", f"docs(janitor): sweep CONTEXT.md and TODO.md for {current_sha} [skip ci]"],
+                    cwd=str(repo), check=True,
+                )
+                committed = True
+            else:
+                subprocess.run(["git", "reset", "HEAD", "--", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
 
     return {
         "status": "ok",

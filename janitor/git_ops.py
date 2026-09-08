@@ -1,0 +1,141 @@
+"""Git operations for the janitor repository caretaker.
+
+All functions operate on a local git repository via the git CLI and are
+safe to call on foreign/remote repositories: nothing here pushes, hard-
+resets away from the pre-existing local HEAD, or mutates state outside
+the repository.
+
+Safety properties:
+- Preflight guards skip repos that are mid-operation (merge, rebase,
+  bisect, cherry-pick), locked (``.git/index.lock``), or on a detached
+  HEAD, so janitor never interferes with human or tool work.
+- Loop prevention: every janitor commit carries a ``Janitor-Run:``
+  trailer, and ``has_24h_activity`` excludes such commits so janitor
+  never sees its own output as reason to act again.
+- Atomic commits: only the exact authorized file set is ever staged and
+  committed; anything else staged causes the whole operation to abort
+  and the index to be reset.
+"""
+
+import subprocess
+from pathlib import Path
+from typing import Optional, Tuple
+
+
+def _sh(cmd: list[str], cwd: Path) -> str:
+    """Run a git command and return trimmed stdout ('' on any failure)."""
+    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if res.returncode != 0:
+        return ""
+    return res.stdout.strip()
+
+
+def check_preflight_guards(repo_dir: Path) -> Optional[str]:
+    """Return a guard name (str) when the repo must be skipped, else None.
+
+    Guards, in check order: not a git repo, index lock held, merge or
+    cherry-pick in progress, rebase in progress, bisect in progress,
+    detached HEAD.
+    """
+    dot_git = repo_dir / ".git"
+    if not dot_git.exists():
+        return "not_a_git_repo"
+    if (dot_git / "index.lock").exists():
+        return "git_index_locked"
+    if (dot_git / "MERGE_HEAD").exists() or (dot_git / "CHERRY_PICK_HEAD").exists():
+        return "merge_in_progress"
+    if (dot_git / "rebase-merge").exists() or (dot_git / "rebase-apply").exists():
+        return "rebase_in_progress"
+    if (dot_git / "BISECT_LOG").exists():
+        return "bisect_in_progress"
+
+    # Detached HEAD: `git symbolic-ref -q HEAD` exits non-zero with no
+    # output when HEAD points directly at a commit instead of a branch.
+    head_res = subprocess.run(
+        ["git", "symbolic-ref", "-q", "HEAD"], cwd=repo_dir, capture_output=True
+    )
+    if head_res.returncode != 0:
+        return "detached_head"
+    return None
+
+
+def get_repo_status(repo_dir: Path) -> dict:
+    """Return porcelain status, dirty flag, branch name, and short SHA."""
+    status_raw = _sh(["git", "status", "--porcelain"], repo_dir)
+    branch = _sh(["git", "symbolic-ref", "--short", "HEAD"], repo_dir) or "HEAD"
+    sha = _sh(["git", "rev-parse", "--short", "HEAD"], repo_dir)
+    return {
+        "is_dirty": bool(status_raw),
+        "porcelain": status_raw,
+        "branch": branch,
+        "sha": sha,
+    }
+
+
+def has_24h_activity(repo_dir: Path) -> Tuple[bool, str, str]:
+    """Report non-janitor activity in the last 24h.
+
+    Returns ``(has_activity, recent_log, recent_diff)``. Commits carrying
+    a ``Janitor-Run:`` trailer are excluded from the log so janitor never
+    triggers on its own sweep commits (loop prevention).
+    """
+    recent_log = _sh(
+        [
+            "git",
+            "log",
+            "--since=24.hours",
+            "--invert-grep",
+            "--grep=^Janitor-Run:",
+            "--pretty=format:%h %s (%cr)",
+        ],
+        repo_dir,
+    )
+
+    recent_diff = ""
+    try:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD~1"],
+            cwd=repo_dir,
+            capture_output=True,
+        )
+        if verify.returncode == 0:
+            recent_diff = _sh(["git", "diff", "HEAD~1..HEAD", "--stat"], repo_dir)
+    except Exception:
+        pass
+
+    has_activity = bool(recent_log)
+    return has_activity, recent_log, recent_diff
+
+
+def atomic_stage_and_commit(
+    repo_dir: Path, files: list[str], message: str, run_id: str
+) -> bool:
+    """Stage exactly ``files`` and commit with a ``Janitor-Run`` trailer.
+
+    Returns True only when every staged path is in ``files`` and the
+    commit succeeds. Any failure (bad add, extra staged paths, empty
+    stage) resets the index and returns False — nothing is committed
+    unless the authorized set was committed atomically.
+    """
+    allowed = set(files)
+    add_res = subprocess.run(
+        ["git", "add"] + files, cwd=repo_dir, capture_output=True
+    )
+    if add_res.returncode != 0:
+        subprocess.run(["git", "reset"], cwd=repo_dir, capture_output=True)
+        return False
+
+    # Verify ONLY the authorized files are staged.
+    staged = _sh(["git", "diff", "--cached", "--name-only"], repo_dir).splitlines()
+    if not staged or any(f not in allowed for f in staged):
+        subprocess.run(["git", "reset"], cwd=repo_dir, capture_output=True)
+        return False
+
+    full_message = f"{message}\n\nJanitor-Run: {run_id}"
+    commit_res = subprocess.run(
+        ["git", "commit", "-m", full_message], cwd=repo_dir, capture_output=True
+    )
+    if commit_res.returncode != 0:
+        subprocess.run(["git", "reset"], cwd=repo_dir, capture_output=True)
+        return False
+    return True

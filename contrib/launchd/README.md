@@ -27,6 +27,10 @@ Edit both copies in `~/Library/LaunchAgents/` and replace:
 | `REPLACE_ME_HOME` | Your `$HOME`, e.g. `/Users/yourname` |
 | `REPLACE_ME_DOCS_MIRROR_PATH` (overview only) | Path to a central docs repo, or delete the `JANITOR_DOCS_MIRROR` key entirely to skip mirroring |
 
+The overview probe (`scripts/status.py` in each target repo) only runs a repo's own code
+if you opt in — add a `JANITOR_RUN_STATUS_PROBE` key set to `1` in the overview plist's
+`EnvironmentVariables` if you want it. Leave it unset to skip the probe.
+
 If you use `g2k-bg`/`g2k` as your model gateway, make sure its own directory
 is on the `PATH` set in the plist — launchd does not inherit your shell's
 `PATH`. If it's not on PATH, janitor falls back to `openrouter/free` and

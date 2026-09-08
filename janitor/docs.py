@@ -84,6 +84,9 @@ RULES:
 """
 
 
+MAX_PROMPT_FIELD_CHARS = 8000
+
+
 def _sh(args: list[str], cwd: Path) -> str:
     r = subprocess.run(args, capture_output=True, text=True, cwd=str(cwd), timeout=10)
     return r.stdout.strip() if r.returncode == 0 else ""
@@ -93,17 +96,33 @@ def _project_dir(project_dir: Optional[str]) -> Path:
     return Path(project_dir).resolve() if project_dir else Path.cwd().resolve()
 
 
+def _capped(text: str, limit: int = MAX_PROMPT_FIELD_CHARS) -> str:
+    """Truncate a prompt field so one huge file/status listing can't blow the context window."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n... [truncated, {len(text) - limit} more chars]"
+
+
 def ensure_claude_symlink(project_dir: Optional[str] = None) -> bool:
-    """Point CLAUDE.md at AGENTS.md if AGENTS.md exists. No-op otherwise."""
+    """Point CLAUDE.md at AGENTS.md if AGENTS.md exists.
+
+    Never deletes a real CLAUDE.md — only replaces a missing file or an
+    existing symlink (to anywhere). A plain file with its own content is
+    left untouched.
+    """
     repo = _project_dir(project_dir)
     agents = repo / "AGENTS.md"
     claude = repo / "CLAUDE.md"
     if not agents.exists():
         return False
-    if claude.is_symlink() and claude.resolve() == agents.resolve():
-        return False
-    if claude.exists() or claude.is_symlink():
+    if claude.is_symlink():
+        if claude.resolve() == agents.resolve():
+            return False
         claude.unlink()
+        claude.symlink_to("AGENTS.md")
+        return True
+    if claude.exists():
+        return False  # real file with its own content — don't clobber it
     claude.symlink_to("AGENTS.md")
     return True
 
@@ -141,11 +160,11 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
         branch=branch or "(detached)",
         current_sha=current_sha,
         timestamp=datetime.now(timezone.utc).isoformat(),
-        git_status=status or "(Clean working tree)",
+        git_status=_capped(status) or "(Clean working tree)",
         recent_log=recent_log or "(No commits found)",
         recent_diff=recent_diff or "(No commit diff available)",
-        curr_context=curr_context,
-        curr_todo=curr_todo,
+        curr_context=_capped(curr_context),
+        curr_todo=_capped(curr_todo),
     )
 
     result = extract_structured(
@@ -162,7 +181,12 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
     if dry_run:
         return {"status": "dry_run", "context_md": new_context, "todo_md": new_todo}
 
-    is_dirty = bool(status)
+    # Re-check the working tree now, right before deciding where to write and
+    # whether to commit — the model call above can take seconds, and a status
+    # snapshot from before it started is stale by the time we act on it.
+    fresh_status_lines = _sh(["git", "status", "--porcelain"], repo).splitlines()
+    is_dirty = bool(fresh_status_lines)
+
     target_context = repo / ("CONTEXT.draft.md" if is_dirty else "CONTEXT.md")
     target_todo = repo / ("TODO.draft.md" if is_dirty else "TODO.md")
     target_context.write_text(new_context)
@@ -171,10 +195,7 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
     committed = False
     if not is_dirty and branch in ("main", "master"):
         diff_files = [f for f in _sh(["git", "diff", "--name-only"], repo).splitlines() if f]
-        untracked = [
-            line[3:] for line in _sh(["git", "status", "--porcelain"], repo).splitlines()
-            if line.startswith("?? ")
-        ]
+        untracked = [line[3:] for line in fresh_status_lines if line.startswith("?? ")]
         allowed = {"CONTEXT.md", "TODO.md"}
         if diff_files and all(f in allowed for f in diff_files) and not untracked:
             subprocess.run(["git", "add", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
@@ -195,10 +216,14 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
 def get_live_status(repo: Path) -> str:
     """Run scripts/status.py in the target repo if present, and return its stdout.
 
-    Convention, not requirement: any repo can drop a `scripts/status.py` that
-    prints whatever live state (ports, host, running services) it wants
-    surfaced in LLM-OVERVIEW.md. No status script -> no probe section.
+    Executing arbitrary code from the target repo is opt-in: set
+    JANITOR_RUN_STATUS_PROBE=1 to enable it. Without that, `janitor overview`
+    only ever reads files and runs git — safe to point at a repo you don't
+    fully trust. With it enabled, scripts/status.py runs with your full
+    privileges, same as any other code you'd execute from that repo.
     """
+    if os.environ.get("JANITOR_RUN_STATUS_PROBE") != "1":
+        return "(Status probe disabled — set JANITOR_RUN_STATUS_PROBE=1 to run scripts/status.py)"
     probe = repo / "scripts" / "status.py"
     if not probe.exists():
         return "(No repo status probe configured — add scripts/status.py to enable one)"
@@ -254,16 +279,19 @@ def generate_overview(project_dir: Optional[str] = None, dry_run: bool = False) 
     prompt = OVERVIEW_PROMPT.format(
         repo_name=repo.name,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        agents_text=agents_text,
-        status_output=status_output,
+        agents_text=_capped(agents_text),
+        status_output=_capped(status_output),
         recent_commits=recent_commits or "(No commits found)",
-        curr_overview=curr_overview,
+        curr_overview=_capped(curr_overview),
     )
 
     try:
         new_overview = call_free(prompt, system=OVERVIEW_SYSTEM, max_tokens=2048, timeout=45).strip() + "\n"
     except RuntimeError as e:
         return {"status": "synthesis_failed", "raw": str(e)}
+
+    if not new_overview.strip() or "LLM-OVERVIEW" not in new_overview.splitlines()[0]:
+        return {"status": "synthesis_failed", "raw": f"model output missing required header: {new_overview[:200]!r}"}
 
     if dry_run:
         return {"status": "dry_run", "overview_md": new_overview, "path": str(overview_file.relative_to(repo))}

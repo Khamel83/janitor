@@ -175,9 +175,8 @@ def _gateway_cli() -> str | None:
     return shutil.which("g2k-bg") or shutil.which("g2k")
 
 
-def _call_gateway(prompt: str, system: str | None, timeout: int) -> str:
-    """Call the local Gateway2000 CLI. Raises RuntimeError on failure."""
-    cli = _gateway_cli()
+def _call_gateway(cli: str, prompt: str, system: str | None, timeout: int) -> str:
+    """Call the local Gateway2000 CLI at `cli`. Raises RuntimeError on failure."""
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     try:
         res = subprocess.run(
@@ -210,8 +209,9 @@ def call_free(
     if not _check_rate_limit():
         raise RuntimeError("Rate limit reached. Wait before retrying.")
 
-    if _gateway_cli():
-        return _call_gateway(prompt, system, timeout)
+    gateway = _gateway_cli()
+    if gateway:
+        return _call_gateway(gateway, prompt, system, timeout)
 
     api_key = _get_api_key()
 

@@ -194,10 +194,13 @@ def sweep_docs(project_dir: Optional[str] = None, dry_run: bool = False) -> dict
 
     committed = False
     if not is_dirty and branch in ("main", "master"):
-        diff_files = [f for f in _sh(["git", "diff", "--name-only"], repo).splitlines() if f]
-        untracked = [line[3:] for line in fresh_status_lines if line.startswith("?? ")]
+        # One status check, taken after the write: covers both a modified
+        # tracked file (" M CONTEXT.md") and a brand-new one ("?? CONTEXT.md")
+        # the same way, so a first-ever sweep (no CONTEXT.md/TODO.md yet)
+        # commits just like a routine update does.
+        post_write = [line[3:] for line in _sh(["git", "status", "--porcelain"], repo).splitlines() if line.strip()]
         allowed = {"CONTEXT.md", "TODO.md"}
-        if diff_files and all(f in allowed for f in diff_files) and not untracked:
+        if post_write and all(f in allowed for f in post_write):
             subprocess.run(["git", "add", "CONTEXT.md", "TODO.md"], cwd=str(repo), check=True)
             subprocess.run(
                 ["git", "commit", "-m", f"docs(janitor): sweep CONTEXT.md and TODO.md for {current_sha} [skip ci]"],

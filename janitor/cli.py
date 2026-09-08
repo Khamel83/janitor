@@ -1,63 +1,302 @@
-"""janitor CLI — on-demand entry point for jobs that don't need a Claude Code hook.
+"""Janitor CLI — fleet discovery, on-demand jobs, and structured reporting.
 
-    janitor sweep [repo ...]     # regenerate CONTEXT.md / TODO.md
-    janitor overview [repo ...]  # regenerate LLM-OVERVIEW.md
+Subcommands::
 
-Both default to the current directory. All other jobs (event recording,
-test gaps, code smells, ...) run via hooks/cron.sh, not this CLI.
+    janitor sweep [repo ...]     regenerate CONTEXT.md / TODO.md
+    janitor overview [repo ...]  regenerate LLM-OVERVIEW.md
+    janitor tidy [repo ...]      purge ephemeral trash + checkpoint abandoned WIP
+    janitor status [repo ...]    report git status and last-run info per repo
+
+Target selection is identical for every subcommand:
+
+- ``--all`` targets every git repository directly under the workspace;
+- explicit repo paths target exactly those repositories;
+- no arguments target the current directory when it is a git repository,
+  otherwise the whole fleet.
+
+The workspace defaults to ``/Volumes/2TB_SSD/GitHub`` and can be redirected
+with ``JANITOR_WORKSPACE``; persistent state defaults to
+``~/.local/state/janitor`` and can be redirected with ``JANITOR_STATE_DIR``
+(used by the test suite and by cron wrappers that want a scratch state).
+Both environment overrides follow the same convention as
+``JANITOR_DOCS_MIRROR`` in the reconciler.
+
+Output is either one human line per repo, ``[<status>] <repo-name>``, or —
+with ``--json`` — a single JSON document on stdout::
+
+    {"schema_version": 1, "run_id": "<run_id>", "results": [...]}
+
+The exit code is 0 when every repo succeeded, fast-pathed (``quiet``), or
+was cleanly skipped; it is 1 when any repo reported ``synthesis_failed``
+or ``error``.
 """
 
 import argparse
+import json
+import os
 import sys
+import time
 from pathlib import Path
+from typing import Optional
 
-from janitor.docs import generate_overview, sweep_docs
+from janitor.git_ops import get_repo_status
+from janitor.hygiene import (
+    checkpoint_abandoned_wip,
+    is_wip_stale,
+    purge_ephemeral_trash,
+)
+from janitor.reconciler import overview_repo, sweep_repo
+from janitor.state import StateManager
 
+DEFAULT_WORKSPACE = Path("/Volumes/2TB_SSD/GitHub")
+WORKSPACE_ENV = "JANITOR_WORKSPACE"
+STATE_DIR_ENV = "JANITOR_STATE_DIR"
 
-def _run(fn, repos: list[Path], dry_run: bool, label: str) -> int:
-    targets = repos or [Path.cwd()]
-    exit_code = 0
-    for repo in targets:
-        result = fn(project_dir=str(repo), dry_run=dry_run)
-        status = result.get("status")
-        if status == "quiet":
-            print(f"[+] {repo}: quiet for 24h and clean, nothing to {label}.")
-        elif status == "not_a_repo":
-            print(f"[-] {repo}: not a git repository, skipping.")
-        elif status == "dry_run":
-            for key, val in result.items():
-                if key in ("context_md", "todo_md", "overview_md"):
-                    print(f"\n--- [DRY RUN {key}: {repo}] ---\n{val}")
-        elif status == "ok":
-            extra = " (committed)" if result.get("committed") else ""
-            if result.get("mirrored_to"):
-                extra += f" (mirrored to {result['mirrored_to']})"
-            print(f"[+] {repo}: wrote {result.get('wrote')}{extra}")
-        else:
-            print(f"[!] {repo}: {label} failed: {result}", file=sys.stderr)
-            exit_code = 1
-    return exit_code
+JSON_SCHEMA_VERSION = 1
+# Any result carrying one of these statuses makes the whole run exit 1.
+FAILING_STATUSES = ("synthesis_failed", "error")
+
+# Keys whose value is printed below a dry-run human result line.
+_DRY_RUN_PREVIEW_KEYS = ("context_md", "todo_md", "overview_md")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="janitor", description="Janitor: background intelligence + docs reconciler")
+def discover_repos(workspace: Path) -> list[Path]:
+    """Return git repositories directly under ``workspace``.
+
+    A directory counts when it contains a ``.git`` entry; the list is
+    sorted by directory name for deterministic fleet order. A missing
+    workspace yields an empty list.
+    """
+    workspace = Path(workspace)
+    if not workspace.is_dir():
+        return []
+    return sorted(
+        (
+            entry.resolve()
+            for entry in workspace.iterdir()
+            if (entry / ".git").exists()
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def _workspace() -> Path:
+    """Workspace root: ``JANITOR_WORKSPACE`` override, else the default."""
+    override = os.environ.get(WORKSPACE_ENV)
+    return Path(override) if override else DEFAULT_WORKSPACE
+
+
+def _state_manager() -> StateManager:
+    """State manager rooted at ``JANITOR_STATE_DIR`` when set."""
+    state_dir = os.environ.get(STATE_DIR_ENV)
+    return StateManager(Path(state_dir)) if state_dir else StateManager()
+
+
+def _resolve_targets(args: argparse.Namespace) -> list[Path]:
+    """Turn parsed CLI args into the concrete list of repo directories."""
+    if getattr(args, "all", False):
+        return discover_repos(_workspace())
+    if getattr(args, "repos", None):
+        return [Path(repo).expanduser().resolve() for repo in args.repos]
+    cwd = Path.cwd()
+    if (cwd / ".git").exists():
+        return [cwd.resolve()]
+    # Not run from inside a git repo: fall back to the whole fleet.
+    return discover_repos(_workspace())
+
+
+def _run_tidy(repo: Path, state_mgr: StateManager, run_id: str) -> dict:
+    """Butler pass: purge ephemeral trash, then checkpoint stale abandoned WIP."""
+    if not (repo / ".git").exists():
+        return {"repo": repo.name, "status": "skipped", "reason": "not_a_git_repo"}
+    purged = purge_ephemeral_trash(repo)
+    checkpoint = None
+    if is_wip_stale(repo):
+        checkpoint = checkpoint_abandoned_wip(repo, state_mgr, run_id)
+    result = {
+        "repo": repo.name,
+        "purged": purged,
+        "purged_count": len(purged),
+        "checkpoint": checkpoint,
+    }
+    if checkpoint:
+        result["status"] = "checkpointed"
+    elif purged:
+        result["status"] = "cleaned"
+    else:
+        result["status"] = "clean"
+    return result
+
+
+def _run_status(repo: Path, state_mgr: StateManager) -> dict:
+    """Report git status plus the most recent recorded janitor run."""
+    if not (repo / ".git").exists():
+        return {"repo": repo.name, "status": "skipped", "reason": "not_a_git_repo"}
+    git_status = get_repo_status(repo)
+    return {
+        "repo": repo.name,
+        "status": "ok",
+        "branch": git_status["branch"],
+        "sha": git_status["sha"],
+        "dirty": git_status["is_dirty"],
+        "last_run": state_mgr.get_last_run(repo.name),
+    }
+
+
+def _human_result(result: dict) -> str:
+    """One ``[<status>] <repo-name>`` line with compact trailing details."""
+    status = result.get("status", "error")
+    name = result.get("repo", "?")
+    line = f"[{status}] {name}"
+    if result.get("reason"):
+        line += f" ({result['reason']})"
+    if status == "ok" and result.get("wrote"):
+        line += f" wrote {result['wrote']}"
+    if result.get("mirrored_to"):
+        line += f" (mirrored to {result['mirrored_to']})"
+    if "purged_count" in result and result["purged_count"]:
+        line += f" purged {result['purged_count']}"
+    if result.get("checkpoint"):
+        ck = result["checkpoint"]
+        if ck.get("wip_branch"):
+            line += f" checkpoint {ck['wip_branch']}"
+        if ck.get("wip_sha"):
+            line += f" ({ck['wip_sha']})"
+    if status == "ok" and result.get("branch"):
+        state_word = "dirty" if result.get("dirty") else "clean"
+        line += f" ({result['branch']} @ {result['sha'] or 'no-commits'}, {state_word})"
+        last_run = result.get("last_run")
+        if last_run:
+            line += f", last run: {last_run.get('status')} {last_run.get('run_id', '')}".rstrip()
+    return line
+
+
+def _emit(results: list[dict], args: argparse.Namespace, run_id: str) -> None:
+    """Print results: one JSON document (--json) or one human line per repo."""
+    if getattr(args, "json", False):
+        payload = {
+            "schema_version": JSON_SCHEMA_VERSION,
+            "run_id": run_id,
+            "results": results,
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    for result in results:
+        print(_human_result(result))
+        if result.get("status") == "dry_run":
+            for key in _DRY_RUN_PREVIEW_KEYS:
+                if result.get(key):
+                    print(f"\n--- {key} preview: {result['repo']} ---\n{result[key]}")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="janitor",
+        description="Janitor: autonomous repository caretaker CLI",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    sweep_cmd = subparsers.add_parser("sweep", help="Regenerate CONTEXT.md and TODO.md")
-    sweep_cmd.add_argument("repos", nargs="*", type=Path)
-    sweep_cmd.add_argument("--dry-run", action="store_true")
+    sp_sweep = subparsers.add_parser(
+        "sweep", help="regenerate CONTEXT.md and TODO.md from recent git activity"
+    )
+    sp_sweep.add_argument(
+        "repos", nargs="*", type=Path,
+        help="target repositories (default: current directory, else the fleet)",
+    )
+    sp_sweep.add_argument(
+        "--all", action="store_true",
+        help="target every git repository under the workspace",
+    )
+    sp_sweep.add_argument(
+        "--dry-run", action="store_true",
+        help="print merged previews without writing or committing anything",
+    )
+    sp_sweep.add_argument("--json", action="store_true", help="emit JSON on stdout")
 
-    overview_cmd = subparsers.add_parser("overview", help="Regenerate LLM-OVERVIEW.md")
-    overview_cmd.add_argument("repos", nargs="*", type=Path)
-    overview_cmd.add_argument("--dry-run", action="store_true")
+    sp_overview = subparsers.add_parser(
+        "overview", help="regenerate LLM-OVERVIEW.md from AGENTS.md and git history"
+    )
+    sp_overview.add_argument(
+        "repos", nargs="*", type=Path,
+        help="target repositories (default: current directory, else the fleet)",
+    )
+    sp_overview.add_argument(
+        "--all", action="store_true",
+        help="target every git repository under the workspace",
+    )
+    sp_overview.add_argument(
+        "--dry-run", action="store_true",
+        help="print the synthesized overview without writing anything",
+    )
+    sp_overview.add_argument("--json", action="store_true", help="emit JSON on stdout")
 
-    args = parser.parse_args()
+    sp_tidy = subparsers.add_parser(
+        "tidy", help="purge ephemeral trash and checkpoint abandoned WIP"
+    )
+    sp_tidy.add_argument(
+        "repos", nargs="*", type=Path,
+        help="target repositories (default: current directory, else the fleet)",
+    )
+    sp_tidy.add_argument(
+        "--all", action="store_true",
+        help="target every git repository under the workspace",
+    )
+    sp_tidy.add_argument("--json", action="store_true", help="emit JSON on stdout")
 
-    if args.command == "sweep":
-        return _run(sweep_docs, args.repos, args.dry_run, "sweep")
-    elif args.command == "overview":
-        return _run(generate_overview, args.repos, args.dry_run, "generate overview for")
-    return 1
+    sp_status = subparsers.add_parser(
+        "status", help="report git status and the last recorded janitor run"
+    )
+    sp_status.add_argument(
+        "repos", nargs="*", type=Path,
+        help="target repositories (default: current directory, else the fleet)",
+    )
+    sp_status.add_argument(
+        "--all", action="store_true",
+        help="target every git repository under the workspace",
+    )
+    sp_status.add_argument("--json", action="store_true", help="emit JSON on stdout")
+
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Run one janitor job across its target repos; return the exit code."""
+    args = _build_parser().parse_args(argv)
+    state_mgr = _state_manager()
+    run_id = f"run_{int(time.time())}"
+
+    results: list[dict] = []
+    for repo in _resolve_targets(args):
+        try:
+            if args.command == "sweep":
+                result = sweep_repo(
+                    repo, state_mgr, run_id, dry_run=getattr(args, "dry_run", False)
+                )
+            elif args.command == "overview":
+                result = overview_repo(
+                    repo, state_mgr, dry_run=getattr(args, "dry_run", False)
+                )
+            elif args.command == "tidy":
+                result = _run_tidy(repo, state_mgr, run_id)
+            elif args.command == "status":
+                result = _run_status(repo, state_mgr)
+            else:  # pragma: no cover - argparse required=True prevents this
+                result = {
+                    "repo": repo.name,
+                    "status": "error",
+                    "error": f"unknown command {args.command!r}",
+                }
+        except Exception as exc:
+            # One broken repo must never abort the fleet run.
+            result = {
+                "repo": repo.name,
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        results.append(result)
+
+    _emit(results, args, run_id)
+    return 1 if any(r.get("status") in FAILING_STATUSES for r in results) else 0
 
 
 if __name__ == "__main__":

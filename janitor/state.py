@@ -93,6 +93,10 @@ class StateManager:
         }
         self.save()
 
+    def get_last_run(self, repo_name: str) -> Optional[dict]:
+        """Return the most recent recorded run ``{status, run_id, ts}`` or None."""
+        return self._repo(repo_name).get("last_run")
+
     def track_wip_branch(
         self,
         repo_name: str,

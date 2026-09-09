@@ -23,7 +23,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from janitor.worker import call_free, extract_structured
-from janitor.docs import sweep_docs
+from janitor.reconciler import sweep_repo
+from janitor.state import StateManager
 
 GATEWAY = "/mock/bin/g2k-bg"
 
@@ -65,9 +66,9 @@ class NoBackendTestCase(unittest.TestCase):
             call_free("hello")
         self.assertIn("OPENROUTER_API_KEY", str(ctx.exception))
 
-    def test_sweep_docs_fails_gracefully_not_with_exception(self):
+    def test_sweep_repo_fails_gracefully_not_with_exception(self):
         repo = _git_repo(self.tmp)
-        result = sweep_docs(project_dir=str(repo))
+        result = sweep_repo(repo, StateManager(self.tmp / "state"), "run_test")
         self.assertEqual(result["status"], "synthesis_failed")
 
 

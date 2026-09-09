@@ -1,8 +1,8 @@
 [Unit]
-Description=Run Janitor Fleet Sweep daily at 03:00 AM
+Description=Run Janitor Fleet Sweep daily at 03:00 AM Pacific Time
 
 [Timer]
-OnCalendar=*-*-* 03:00:00
+OnCalendar=*-*-* 03:00:00 America/Los_Angeles
 Persistent=true
 
 [Install]

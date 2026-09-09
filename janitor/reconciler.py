@@ -35,6 +35,7 @@ from janitor.git_ops import (
     get_repo_status,
     has_24h_activity,
 )
+from janitor.hygiene import checkpoint_abandoned_wip, is_wip_stale, purge_ephemeral_trash
 from janitor.state import StateManager
 from janitor.worker import call_free, extract_structured
 
@@ -254,10 +255,13 @@ def sweep_repo(
     guard = check_preflight_guards(repo_dir)
     if guard:
         return {"repo": repo_dir.name, "status": "skipped", "reason": guard}
+    if not dry_run:
+        purge_ephemeral_trash(repo_dir)
+        if is_wip_stale(repo_dir):
+            checkpoint_abandoned_wip(repo_dir, state_mgr, run_id)
 
     status = get_repo_status(repo_dir)
     has_act, recent_log, recent_diff = has_24h_activity(repo_dir)
-
     if not status["is_dirty"] and not has_act:
         return {"repo": repo_dir.name, "status": "quiet", "tokens_spent": 0}
 

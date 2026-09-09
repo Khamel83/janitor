@@ -9,8 +9,11 @@
 - [x] Homelab systemd units & Mac Mini SSH runner script (`a04c03a`)
 - [x] Add `.gitignore` and untrack pycache / egg-info (`ec95539`)
 - [x] Fix timestamp formatting in `git_ops.py` to keep input hash deterministic (`3295676`)
-- [ ] Run end-to-end unit test suite verification
-- [ ] Verify local editable package installation (`pip install -e .`)
-- [ ] Perform live dry-run sweep against `janitor` repository
-- [ ] Perform live dry-run sweep against external fleet target (`maya`)
+- [x] Run end-to-end unit test suite verification (90/90 passing)
+- [x] Verify local editable package installation (`pip install -e .`)
+- [x] Perform live dry-run and real sweep against `janitor` repository
+- [x] Perform live overview synthesis against external fleet target (`maya`)
+- [x] Adjust systemd timer to 3:00 AM America/Los_Angeles on Homelab
+- [x] Archive legacy Mintlify starter files in `docs` repo and populate 80 fleet overviews in `docs/repos/`
+- [x] Integrate Butler auto-tidy pre-pass into `sweep_repo` and remove dead `docs.py` code (`0f2bf86`)
 <!-- janitor:end:todo -->

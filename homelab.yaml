@@ -4,15 +4,15 @@ project:
   name: Janitor
   repository: https://github.com/Khamel83/janitor
   kind: service
-  lifecycle: development
+  lifecycle: active
   owner: homelab
 monitoring:
-  state: standby
+  state: observing
 runtime:
   production:
-    host: unknown
-    managed_by: unknown
-    unit: janitor
+    host: homelab
+    managed_by: systemd
+    unit: janitor-sweep.timer
 health:
   source: homelab-api
   checks: []
@@ -21,7 +21,8 @@ observability:
   evidence_policy: sanitized
 dependencies:
   required: []
-  optional: []
+  optional:
+    - gateway2000
 secrets:
   broker_consumer: janitor
   references: []
@@ -29,4 +30,4 @@ operations:
   repair_ids: []
 docs:
   index: README.md
-  operations: docs/OPERATIONS.md
+  spec: docs/superpowers/specs/2026-09-07-janitor-repository-caretaker-design.md

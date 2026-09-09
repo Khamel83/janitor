@@ -1,214 +1,118 @@
 # Janitor
 
-> Free background intelligence for Claude Code sessions.
+> Autonomous repository caretaker & living context reconciler for the Homelab fleet.
 
-Janitor watches your Claude Code sessions passively, records what you do, and runs background analysis using free models ($0). When you start a new session, it injects accumulated context — decisions, patterns, test gaps, code smells — so you pick up where you left off.
+Janitor is an opinionated groundskeeper for your software repositories. It runs on a master–worker architecture between Homelab and your Mac mini, ensuring your repositories stay clean, documented, and reconciled against ground truth—without human friction or unsolicited prompt pollution.
 
-No configuration. No API costs. Install once, forget it's there.
+---
 
 ## What It Does
 
-**During your session** (PostToolUse hook):
-- Records file reads, writes, edits, commits
-- Captures decisions, blockers, errors
-- Writes to `.janitor/events.jsonl` (append-only, ~30KB/session)
+### 1. The "Butler" Auto-Tidy Engine (`janitor tidy`)
+When engineers or AI agents finish a session, walk away, and leave repos accidentally dirty:
+- **Trash Purge:** Safely sweeps away ephemeral caches (`__pycache__`, `.pytest_cache`, `.mypy_cache`, `.DS_Store`, swap files).
+- **Abandoned WIP Checkpoint:** If changes have been untouched for >6 hours:
+  - Checkpoints all uncommitted work into a safe, local-only branch `auto-wip/<date>`.
+  - **Zero Data Loss:** Restores `main` strictly to your pre-existing local commit (`git rev-parse HEAD`), **never `origin/main`** (unpushed commits are 100% preserved).
+  - **Secret Denylist:** Strictly refuses to stage or commit `.env*`, `*.pem`, `*.key`, or credentials.
+  - Leaves an actionable handoff note in `CONTEXT.md` under `## Janitor Handoff & Recent Interventions` so the next agent knows where work paused.
 
-**Every 15 minutes** (system cron, free models):
-- Extracts decisions and blockers from recent events
-- Detects test gaps (files changed without tests)
-- Scans for code smells (oversized files, long functions)
-- Monitors config drift (uncommitted config changes)
-- Builds dependency graph (who depends on what)
-- Enriches commit messages with semantic tags
-- Once/day: mines recurring patterns, generates project onboarding summary
+### 2. Living Context Reconciler (`janitor sweep`)
+- Reconciles `CONTEXT.md` (Active Focus, Verified Accomplishments, Watch Items) and `TODO.md` from actual git commits and diffs over the last 24 hours.
+- **Sentinel Preservation:** Writes strictly inside `<!-- janitor:begin -->` ... `<!-- janitor:end -->` blocks, preserving all custom human notes, diagrams, and instructions byte-for-byte.
+- **First-Run Bootstrap:** Automatically initializes sentinel blocks in repositories that don't have them yet without breaking existing content.
+- **Atomic Commit Gate:** Only auto-commits if on clean `main`/`master`, staging strictly `CONTEXT.md` and `TODO.md` with a `Janitor-Run: <run-id>` git trailer. Leaves drafts if dirty.
+- **Zero-Token Fast Path:** Unchanged repos exit in ~0.1 seconds with **0 tokens and 0 API calls**.
 
-**At session start** (SessionStart hook):
-- Injects onboarding summary, test gaps, code smells, config drift, patterns, high-impact files
-- You see this automatically — no action required
+### 3. Deep Architectural Overview (`janitor overview`)
+- Re-synthesizes high-density, ground-truth architectural maps (`LLM-OVERVIEW.md`) covering:
+  - `## What this repo is`
+  - `## Machine & Host Ownership` (Mac mini vs Homelab Docker vs Pi)
+  - `## What is actually built` (source code headers, routes, models, tables, configs)
+  - `## Canonical entry points`
+- **Central Mirroring:** Automatically mirrors overviews to `/Volumes/2TB_SSD/GitHub/docs/repos/<repo_name>.md`.
 
-## What You See
+---
+
+## Operational Cadence
+
+Janitor runs on a dual-cadence master–worker schedule orchestrated by systemd on Homelab:
+
+| Pass | Cadence | Trigger | What It Does |
+| :--- | :--- | :--- | :--- |
+| **Daily Sweep** | **Nightly at 03:00 UTC** | `janitor-sweep.timer` on Homelab | SSH to Mac mini → runs auto-tidy on stale WIP → reconciles `CONTEXT.md` & `TODO.md` for active repos (fast-paths quiet repos in 0.1s). |
+| **Weekly Overview** | **Sunday at 04:00 UTC** | `janitor-overview.timer` on Homelab | SSH to Mac mini → deep codebase inspection → refreshes `LLM-OVERVIEW.md` and mirrors to central docs. |
+| **On-Demand** | **Anytime via CLI** | Manual `janitor` command | Instant health check, immediate tidy, or targeted repo sweep from your terminal. |
+
+---
+
+## Topology
 
 ```
-JANITOR ONBOARDING: # Project Status — 163 events logged. 4 test gaps in janitor module...
-JANITOR: Test gaps: 4 gaps: core/janitor/worker.py, core/janitor/jobs.py
-JANITOR: Code smells: 2 oversized files, 4 long functions
-JANITOR: High-impact files: core/task_schema.py (4 deps), core/router/lane_policy.py (3 deps)
+┌────────────────────────────────────────────────────────┐
+│               HOMELAB (Master Control Plane)           │
+│  - systemd user timers:                                │
+│      • janitor-sweep.timer (Daily 03:00 UTC)           │
+│      • janitor-overview.timer (Sun 04:00 UTC)          │
+│  - Triggers Mac mini over private LAN / Tailscale SSH  │
+└───────────────────────────┬────────────────────────────┘
+                            │
+            ssh macmini "janitor-runner <command>"
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             MAC MINI (Worker & Storage Node)           │
+│  - Repositories: /Volumes/2TB_SSD/GitHub/*             │
+│  - Central Docs Hub: /Volumes/2TB_SSD/GitHub/docs/repos│
+│  - Inference: Gateway2000 (g2k-bg via stdin streaming) │
+│    (fallback: OpenRouter free models via HTTPS)        │
+│  - State & Telemetry: ~/.local/state/janitor/state.json│
+└────────────────────────────────────────────────────────┘
 ```
 
-## Install
+---
 
-**Requires:** Claude Code, Python 3.10+, an [OpenRouter API key](https://openrouter.ai/keys) (free tier works).
+## CLI Usage
 
 ```bash
-git clone https://github.com/Khamel83/janitor.git ~/github/janitor
-cd ~/github/janitor
-./setup.sh
+# Check status across all 80 repos on the workstation (~2 seconds)
+janitor status --all
+
+# Sweep the current repo (or quiet fast-path if unchanged)
+janitor sweep
+
+# Sweep specific repos
+janitor sweep /Volumes/2TB_SSD/GitHub/maya /Volumes/2TB_SSD/GitHub/argus
+
+# Sweep all repos across the entire fleet
+janitor sweep --all
+
+# Preview sweep without modifying files
+janitor sweep --dry-run
+
+# Tidy ephemeral trash and checkpoint abandoned work
+janitor tidy
+janitor tidy --all
+
+# Regenerate deep architectural overview and mirror to central docs
+janitor overview /Volumes/2TB_SSD/GitHub/maya
+janitor overview --all
+
+# Machine-readable JSON output (used by Homelab & Baywatch)
+janitor sweep --all --json
 ```
 
-That's it. The setup script:
-1. Installs the `janitor` Python package
-2. Adds Claude Code hooks (record, context, session-end)
-3. Installs a cron job (every 15 minutes)
+---
 
-## How It Works
+## Testing & Verification
 
-```
-┌─────────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Claude Code      │────>│ .janitor/    │────>│ cron.sh     │
-│ (your session)  │     │ events.jsonl │     │ (every 15m) │
-└─────────────────┘     └──────────────┘     └──────┬───────┘
-                                                          │
-                              ┌─────────────────────┐
-                              │ openrouter/free ($0)  │
-                              ├─────────────────────┤
-                              │ 12 background jobs  │
-                              ├─────────────────────┤
-                              │ decisions          │
-                              │ test gaps           │
-                              │ code smells         │
-                              │ config drift        │
-                              │ dependency map      │
-                              │ commit enrichment  │
-                              │ pattern mining      │
-                              │ onboarding summary │
-                              └─────────────────────┘
-                                                          │
-                              ┌─────────────────────┐
-                              │ .janitor/           │
-                              │ test-gaps.json      │
-                              │ code-smells.json    │
-                              │ dep-graph.json      │
-                              │ onboarding.md      │
-                              │ patterns.json       │
-                              └─────────────────────┘
-```
-
-## Rate Budget
-
-- **Pure-compute jobs** (test gaps, code smells, config drift, dependency map): unlimited, no API calls
-- **LLM jobs**: 8-19 calls/day, well under the 1000/day free tier limit
-- **Storage**: ~35MB/year per project
-
-## Architecture
-
-```
-janitor/
-  janitor/
-    recorder.py      # Event recording (append-only JSONL + SQLite)
-    worker.py        # OpenRouter free model caller (rate-limited, cached)
-    jobs.py          # 12 background jobs
-    __init__.py      # Package exports
-  hooks/
-    record.sh        # PostToolUse: records tool calls
-    context.sh       # SessionStart: injects accumulated context
-    session-end.sh   # SessionEnd: marks session end
-  scripts/
-    cron.sh          # System cron entry point
-  setup.sh           # One-command install
-```
-
-## Jobs
-
-| Job | LLM? | Frequency | What it finds |
-|-----|------|----------|---------------|
-| Test Gap Detector | No | Every 15m | Source files changed without test files |
-| Code Smell Scanner | No | Every 15m | Oversized files (>500 lines), long functions (>100 lines) |
-| Config Drift Monitor | No | Every 15m | Uncommitted changes in config/ |
-| Dependency Impact | No | Every 15m | Import graph, ranks files by downstream impact |
-| Stale File Detection | No | Daily | Files untouched in 30+ days |
-| Turn Summarizer | 1 call | Every 15m | Decisions, blockers, discoveries from events |
-| Commit Enricher | 1/new commit | Per commit | Semantic tags and summaries for commits |
-| Pattern Miner | 1 call | Daily | Recurring files, errors, decisions across sessions |
-| Onboarding Summary | 1 call | Daily | "State of the project" summary from all data |
-| Session Digest | 1 call | Session end | Full structured summary for handoff |
-| File Change Analysis | 1 call | After commits | Categorizes changes, identifies hotspots |
-| Memory Hygiene | 1 call | Daily | Overlapping memory files to merge |
-
-## On-Demand: Doc Sweeps
-
-Besides the always-on hook/cron jobs above, `janitor` also ships a CLI for the two
-jobs you're most likely to want to trigger directly — regenerating high-level docs
-from git activity rather than session events:
+Janitor includes an extensive offline test suite covering preflight guards, stage verification, zero-loss checkpointing, sentinel merging, and gateway fallback:
 
 ```bash
-janitor sweep [repo ...]      # regenerate CONTEXT.md / TODO.md from recent commits + working tree state
-janitor overview [repo ...]   # regenerate LLM-OVERVIEW.md from AGENTS.md + commit history
+python3 -m unittest discover -s tests -v
 ```
 
-Both default to the current directory, take `--dry-run` to print instead of write,
-and use the same soft rate budget as every other job. `sweep` never commits
-into a dirty working tree — it writes `CONTEXT.draft.md`/`TODO.draft.md` instead, and
-only auto-commits on a clean `main`/`master` where the only diff is the two doc files
-themselves. `overview` never auto-commits at all, on any branch — review
-`LLM-OVERVIEW.md` before committing it yourself.
-
-`overview` also:
-- Runs `scripts/status.py` in the target repo, feeding its output into the LLM-OVERVIEW.md
-  prompt as a live status probe — but only if `JANITOR_RUN_STATUS_PROBE=1` is set. This
-  executes arbitrary code from the target repo with your full privileges, so it's opt-in;
-  without it, `overview` only reads files and runs git, safe to point at a repo you don't
-  fully trust. **Combined risk:** with the probe on, its output — plus everything else in
-  the prompt (`AGENTS.md`, file contents, commit log) — goes to a model with no enforced
-  boundary between instructions and data on the `g2k-bg`/`g2k` gateway path (see Model
-  Backend below). Don't enable the probe against a repo whose content you don't trust,
-  even though the probe itself and the model call are two separate opt-in steps.
-- Mirrors the generated overview to `$JANITOR_DOCS_MIRROR/repos/<repo-name>.md` if that
-  env var is set, in addition to (never instead of) the repo's own `LLM-OVERVIEW.md`.
-  **Two repos with the same directory name but different paths** (e.g. `~/work/api` and
-  `~/side-projects/api`) will collide in the mirror and silently overwrite each other —
-  the mirror key is the directory's basename, not its full path. Keep mirrored repo names
-  distinct, or don't rely on the mirror for repos that share a name.
-
-Run these from cron/launchd (e.g. `janitor sweep` nightly, `janitor overview` weekly —
-see `contrib/launchd/` for macOS templates) or by hand.
-
-## Model Backend
-
-Every job that calls a model — sweep, overview, turn summarizer, commit enricher,
-pattern miner, onboarding summary, memory hygiene — goes through `janitor.worker`,
-which:
-
-1. Uses `g2k-bg`/`g2k` (Gateway2000) if either is on `PATH`.
-2. Otherwise falls back to a direct `openrouter/free` HTTP call — set
-   `OPENROUTER_API_KEY` for this path.
-
-Usage is tracked locally in `.janitor/usage.jsonl` against a soft 1000/day,
-20/minute budget regardless of which backend actually served the request.
-
-## Configuration
-
-Optional environment variables:
-
-```bash
-export OPENROUTER_API_KEY=sk-or-...  # Required for LLM jobs. Get one free at openrouter.ai/keys
-```
-
-Without the API key, pure-compute jobs (test gaps, code smells, config drift, dependency impact) still work. LLM jobs will fail gracefully.
-
-## Storage
-
-Per project, in `.janitor/`:
-
-| File | Purpose |
-|------|---------|
-| `events.jsonl` | Raw session events (append-only, source of truth) |
-| `intelligence.db` | SQLite index for queries (rebuilt on demand) |
-| `usage.jsonl` | API usage log for rate limiting |
-| `test-gaps.json` | Latest test gap detection results |
-| `code-smells.json` | Latest code smell scan results |
-| `config-drift.json` | Latest config drift results |
-| `dep-graph.json` | Latest dependency graph |
-| `commit-enrichments.json` | Enriched commit messages (by hash) |
-| `patterns.json` | Latest pattern mining results |
-| `onboarding-summary.md` | Latest onboarding summary |
-
-## Uninstall
-
-```bash
-pip uninstall janitor
-crontab -l | grep -v janitor | crontab -
-# Remove hook entries from ~/.claude/settings.json
-```
+---
 
 ## License
 

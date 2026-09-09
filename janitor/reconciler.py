@@ -409,12 +409,7 @@ def _central_docs_root() -> Optional[Path]:
 
 
 def _central_repo_clean(root: Path) -> bool:
-    """True when ``root`` is a git repo with a clean tree and no index lock.
-
-    Mirroring must never run inside a busy central repo (locked or dirty),
-    or janitor would fight whatever is happening there — and a dirty central
-    tree would make the mirror write indistinguishable from human work.
-    """
+    """True when ``root`` has no index lock and no uncommitted non-mirror changes."""
     if not root.exists() or not (root / ".git").exists():
         return False
     if (root / ".git" / "index.lock").exists():
@@ -433,12 +428,12 @@ def _central_repo_clean(root: Path) -> bool:
         return False
     meaningful_lines = [
         line for line in res.stdout.splitlines()
-        if not line[3:].startswith("repos")
+        if not line[3:].startswith("repos/")
+        and line[3:] != "repos"
         and not line[3:].endswith(".DS_Store")
         and not line[3:].endswith("Thumbs.db")
     ]
     return len(meaningful_lines) == 0
-
 
 def _mirror_overview(repo_dir: Path, overview_text: str) -> Optional[str]:
     """Mirror LLM-OVERVIEW.md into the central docs repo, if one is available.

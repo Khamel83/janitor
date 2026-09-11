@@ -100,10 +100,8 @@ def check_preflight_guards(repo_dir: Path) -> Optional[str]:
 
     # Detached HEAD: `git symbolic-ref -q HEAD` exits non-zero with no
     # output when HEAD points directly at a commit instead of a branch.
-    head_res = subprocess.run(
-        ["git", "symbolic-ref", "-q", "HEAD"], cwd=repo_dir, capture_output=True
-    )
-    if head_res.returncode != 0:
+    head_ref = _sh(["git", "symbolic-ref", "-q", "HEAD"], repo_dir)
+    if not head_ref:
         return "detached_head"
     return None
 

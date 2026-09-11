@@ -106,6 +106,17 @@ class TestGitOps(unittest.TestCase):
         subprocess.run(["git", "checkout", sha], cwd=self.repo_dir, capture_output=True, check=True)
         self.assertEqual(check_preflight_guards(self.repo_dir), "detached_head")
 
+    def test_preflight_detached_head_probe_timeout_treated_as_detached(self):
+        original_run = subprocess.run
+
+        def side_effect(cmd, **kwargs):
+            if cmd[:4] == ["git", "symbolic-ref", "-q", "HEAD"]:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+            return original_run(cmd, **kwargs)
+
+        with mock.patch("janitor.git_ops.subprocess.run", side_effect=side_effect):
+            self.assertEqual(check_preflight_guards(self.repo_dir), "detached_head")
+
     def test_repo_status_clean(self):
         status = get_repo_status(self.repo_dir)
         sha = subprocess.run(

@@ -134,6 +134,17 @@ class TestHygiene(unittest.TestCase):
         (self.repo_dir / "fresh.md").write_text("now\n")
         self.assertFalse(is_wip_stale(self.repo_dir))
 
+    def test_is_wip_stale_ignores_linked_worktree_git_pointer(self):
+        worktree = Path(self.temp_dir.name) / "linked"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "feature", str(worktree)],
+            cwd=self.repo_dir,
+            check=True,
+        )
+        old = time.time() - 48 * 3600
+        os.utime(worktree / ".git", (old, old))
+        self.assertFalse(is_wip_stale(worktree))
+
     # --------------------------------------------------------- checkpoint
 
     def test_checkpoint_creates_wip_branch_commits_trailer_restores_base(self):

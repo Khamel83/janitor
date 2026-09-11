@@ -22,12 +22,38 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
-def _sh(cmd: list[str], cwd: Path) -> str:
+def _sh(
+    cmd: list[str], cwd: Path, timeout: float = 10.0, env: dict[str, str] | None = None
+) -> str:
     """Run a git command and return trimmed stdout ('' on any failure)."""
-    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    try:
+        res = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except (subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
+        return ""
     if res.returncode != 0:
         return ""
     return res.stdout.strip()
+
+
+def resolve_git_metadata(repo_dir: Path) -> tuple[Path, Path] | None:
+    """Return resolved git worktree and common git directories for a repo."""
+    git_dir = _sh(["git", "rev-parse", "--git-dir"], repo_dir)
+    common_dir = _sh(["git", "rev-parse", "--git-common-dir"], repo_dir)
+    if not git_dir or not common_dir:
+        return None
+
+    def absolute(path: str) -> Path:
+        git_path = Path(path)
+        return git_path if git_path.is_absolute() else (Path(repo_dir) / git_path).resolve()
+
+    return absolute(git_dir), absolute(common_dir)
 
 
 def check_preflight_guards(repo_dir: Path) -> Optional[str]:
@@ -37,17 +63,40 @@ def check_preflight_guards(repo_dir: Path) -> Optional[str]:
     cherry-pick in progress, rebase in progress, bisect in progress,
     detached HEAD.
     """
-    dot_git = repo_dir / ".git"
-    if not dot_git.exists():
+    if not repo_dir.exists():
         return "not_a_git_repo"
-    if (dot_git / "index.lock").exists():
-        return "git_index_locked"
-    if (dot_git / "MERGE_HEAD").exists() or (dot_git / "CHERRY_PICK_HEAD").exists():
-        return "merge_in_progress"
-    if (dot_git / "rebase-merge").exists() or (dot_git / "rebase-apply").exists():
-        return "rebase_in_progress"
-    if (dot_git / "BISECT_LOG").exists():
-        return "bisect_in_progress"
+
+    toplevel = _sh(["git", "rev-parse", "--show-toplevel"], repo_dir)
+    if not toplevel:
+        return "not_a_git_repo"
+    if Path(toplevel).resolve() != repo_dir.resolve():
+        return "not_a_git_repo"
+
+    git_metadata = resolve_git_metadata(repo_dir)
+    if not git_metadata:
+        return "not_a_git_repo"
+
+    git_dir, common_dir = git_metadata
+    checked_dirs: list[Path] = []
+    for d in (git_dir, common_dir):
+        if d not in checked_dirs:
+            checked_dirs.append(d)
+
+    for candidate in checked_dirs:
+        if (candidate / "index.lock").exists():
+            return "git_index_locked"
+
+    for candidate in checked_dirs:
+        if (candidate / "MERGE_HEAD").exists() or (candidate / "CHERRY_PICK_HEAD").exists():
+            return "merge_in_progress"
+
+    for candidate in checked_dirs:
+        if (candidate / "rebase-merge").exists() or (candidate / "rebase-apply").exists():
+            return "rebase_in_progress"
+
+    for candidate in checked_dirs:
+        if (candidate / "BISECT_LOG").exists():
+            return "bisect_in_progress"
 
     # Detached HEAD: `git symbolic-ref -q HEAD` exits non-zero with no
     # output when HEAD points directly at a commit instead of a branch.

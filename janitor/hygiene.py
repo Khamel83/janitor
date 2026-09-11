@@ -80,6 +80,7 @@ def _non_git_walk(repo_dir: Path):
     for root, dirs, files in os.walk(repo_dir, topdown=True):
         if ".git" in dirs:
             dirs.remove(".git")
+        files = [name for name in files if name != ".git"]
         yield root, dirs, files
 
 

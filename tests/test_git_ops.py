@@ -1,5 +1,6 @@
 import subprocess
 import tempfile
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,48 @@ class TestGitOps(unittest.TestCase):
         merge_head = self.repo_dir / ".git" / "MERGE_HEAD"
         merge_head.write_text("0000000000000000000000000000000000000000\n")
         self.assertEqual(check_preflight_guards(self.repo_dir), "merge_in_progress")
+
+    def test_preflight_resolves_git_pointer_and_detects_worktree_lock(self):
+        worktree = Path(self.temp_dir.name) / "linked"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "feature", str(worktree)],
+            cwd=self.repo_dir,
+            check=True,
+        )
+        git_dir = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        if not git_dir.is_absolute():
+            git_dir = (worktree / git_dir).resolve()
+        (git_dir / "index.lock").write_text("")
+        self.assertEqual(check_preflight_guards(worktree), "git_index_locked")
+
+    def test_preflight_detects_common_operation_marker_from_linked_worktree(self):
+        worktree = Path(self.temp_dir.name) / "linked"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "feature", str(worktree)],
+            cwd=self.repo_dir,
+            check=True,
+        )
+        git_dir = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--git-common-dir"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+        if not git_dir.is_absolute():
+            git_dir = (worktree / git_dir).resolve()
+        (git_dir / "MERGE_HEAD").write_text("0" * 40 + "\n")
+        self.assertEqual(check_preflight_guards(worktree), "merge_in_progress")
 
     def test_preflight_guards_detached_head(self):
         sha = subprocess.run(
@@ -173,6 +216,16 @@ class TestGitOps(unittest.TestCase):
             text=True,
         ).stdout
         self.assertEqual(staged, "")
+
+    def test_sh_timeout_returns_empty_string(self):
+        # Importing _sh inside the test keeps the patched symbol local.
+        from janitor.git_ops import _sh as imported_sh
+
+        with mock.patch("janitor.git_ops.subprocess.run") as mocked_run:
+            mocked_run.side_effect = subprocess.TimeoutExpired(
+                cmd=["git", "rev-parse"], timeout=0.1
+            )
+            self.assertEqual(imported_sh(["git", "rev-parse"], self.repo_dir), "")
 
 
 if __name__ == "__main__":

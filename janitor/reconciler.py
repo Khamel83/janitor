@@ -213,8 +213,14 @@ def merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str:
     if pattern.search(existing_text):
         return pattern.sub(replacement, existing_text)
 
-    sep = "\n\n" if existing_text.strip() else ""
-    return f"{existing_text.rstrip()}{sep}{replacement}\n"
+    separator = "\n" if existing_text and not existing_text.endswith(("\n", "\r")) else ""
+    return f"{existing_text}{separator}{replacement}\n"
+
+
+def _extract_sentinel_inner_exact(existing_text: str, tag: str) -> str | None:
+    """Return the first complete block's inner bytes without normalization."""
+    match = _sentinel_pattern(tag).search(existing_text)
+    return match.group(1) if match else None
 
 
 def extract_sentinel_block(existing_text: str, tag: str) -> str:
@@ -371,14 +377,14 @@ def sweep_repo(
     todo_file = repo_dir / "TODO.md"
     curr_context, curr_context_bytes = _read_document(context_file)
     curr_todo, curr_todo_bytes = _read_document(todo_file)
-    existing_branch_block = extract_sentinel_block(
+    existing_branch_inner = _extract_sentinel_inner_exact(
         curr_context, BRANCH_SENTINEL_TAG
     )
     new_branch_block = render_branch_block(branch_report)
-    new_branch_inner = extract_sentinel_block(
+    new_branch_inner = _extract_sentinel_inner_exact(
         new_branch_block, BRANCH_SENTINEL_TAG
     )
-    branch_changed = existing_branch_block != new_branch_inner
+    branch_changed = existing_branch_inner != new_branch_inner
 
     status = get_repo_status(repo_dir)
     has_act, recent_log, recent_diff = has_24h_activity(repo_dir)
@@ -447,7 +453,7 @@ def sweep_repo(
 
     if branch_changed:
         merged_context = merge_sentinel_block(
-            merged_context, BRANCH_SENTINEL_TAG, new_branch_inner
+            merged_context, BRANCH_SENTINEL_TAG, new_branch_inner or ""
         )
 
     final_context_bytes = merged_context.encode("utf-8")

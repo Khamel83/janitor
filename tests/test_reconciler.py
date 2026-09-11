@@ -115,6 +115,17 @@ class TestMergeSentinelBlock(unittest.TestCase):
             merged.index("Keep this intact."), merged.index("<!-- janitor:begin:recent -->")
         )
 
+    def test_first_run_bootstrap_preserves_trailing_human_bytes(self):
+        original = "# Human Notes\ntrailing bytes \t"
+        merged = merge_sentinel_block(original, "recent", "- Added feature A\n")
+
+        replacement = (
+            "<!-- janitor:begin:recent -->\n"
+            "- Added feature A\n"
+            "<!-- janitor:end:recent -->\n"
+        )
+        self.assertEqual(merged, original + "\n" + replacement)
+
     def test_first_run_bootstrap_on_empty_text(self):
         merged = merge_sentinel_block("", "todo", "- [ ] first\n")
         self.assertEqual(
@@ -650,6 +661,66 @@ class TestSweepRepo(unittest.TestCase):
         self.assertEqual(second["status"], "written")
         self.assertEqual(extract.call_count, 1)
         self.assertIn("new", (repo / "CONTEXT.md").read_text())
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_branch_change_detects_managed_inner_whitespace(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        existing = (
+            "<!-- janitor:begin:branches -->\n"
+            " new \n"
+            "<!-- janitor:end:branches -->\n"
+        )
+        _commit(
+            repo,
+            "initial",
+            files={"README.md": "hi\n", "CONTEXT.md": existing},
+            stamp=_old_stamp(),
+        )
+        collect.return_value = fixture_branch_report(changed=True)
+
+        result = sweep_repo(repo, self.sm, "run_exact_inner", no_fetch=True)
+
+        self.assertEqual(result["status"], "committed")
+        self.assertTrue(result["branch_changed"])
+        self.assertEqual(
+            (repo / "CONTEXT.md").read_text(),
+            "<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->\n",
+        )
+        extract.assert_not_called()
+
+    @patch("janitor.reconciler.extract_structured", return_value=SWEEP_RESPONSE)
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_own_sweep_commit_does_not_change_normal_input_evidence(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", files={"README.md": "before\n"})
+        (repo / "README.md").write_text("before\nhuman change\n")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "human activity"], cwd=repo, check=True
+        )
+        collect.return_value = fixture_branch_report(changed=True)
+
+        first = sweep_repo(repo, self.sm, "run_stable_hash_1", no_fetch=True)
+        second = sweep_repo(repo, self.sm, "run_stable_hash_2", no_fetch=True)
+
+        self.assertEqual(first["status"], "committed")
+        self.assertEqual(second["status"], "unchanged_hash")
+        self.assertEqual(extract.call_count, 1)
 
 
 class TestOverviewRepo(unittest.TestCase):

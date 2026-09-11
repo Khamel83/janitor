@@ -138,17 +138,31 @@ def has_24h_activity(repo_dir: Path) -> Tuple[bool, str, str]:
         repo_dir,
     )
 
+    # The latest commit may be Janitor's own output. Anchor the diff to the
+    # latest non-Janitor commit so a Janitor-Run commit does not change the
+    # normal sweep evidence while real activity remains visible.
+    latest_activity = _sh(
+        [
+            "git",
+            "log",
+            "-n",
+            "1",
+            "--invert-grep",
+            "--grep=^Janitor-Run:",
+            "--format=%H",
+        ],
+        repo_dir,
+    )
     recent_diff = ""
-    try:
-        verify = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD~1"],
-            cwd=repo_dir,
-            capture_output=True,
+    if latest_activity:
+        parent = _sh(
+            ["git", "rev-parse", "--verify", f"{latest_activity}^"], repo_dir
         )
-        if verify.returncode == 0:
-            recent_diff = _sh(["git", "diff", "HEAD~1..HEAD", "--stat"], repo_dir)
-    except Exception:
-        pass
+        if parent:
+            recent_diff = _sh(
+                ["git", "diff", f"{parent}..{latest_activity}", "--stat"],
+                repo_dir,
+            )
 
     has_activity = bool(recent_log)
     return has_activity, recent_log, recent_diff

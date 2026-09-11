@@ -153,6 +153,36 @@ class TestGitOps(unittest.TestCase):
         self.assertNotIn("docs(janitor)", log)
         self.assertIn("initial commit", log)
 
+    def test_has_24h_activity_diff_ignores_latest_janitor_commit(self):
+        (self.repo_dir / "README.md").write_text("# Test Repo\nhuman change\n")
+        subprocess.run(["git", "add", "README.md"], cwd=self.repo_dir, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "human activity"],
+            cwd=self.repo_dir,
+            check=True,
+            capture_output=True,
+        )
+
+        before = has_24h_activity(self.repo_dir)
+
+        (self.repo_dir / "CONTEXT.md").write_text("janitor output\n")
+        self.assertTrue(
+            atomic_stage_and_commit(
+                self.repo_dir,
+                ["CONTEXT.md"],
+                "docs(janitor): update branch inventory [skip ci]",
+                "run_stable_diff",
+            )
+        )
+
+        after = has_24h_activity(self.repo_dir)
+        self.assertTrue(before[0])
+        self.assertTrue(after[0])
+        self.assertEqual(after[1], before[1])
+        self.assertEqual(after[2], before[2])
+        self.assertIn("README.md", after[2])
+        self.assertNotIn("CONTEXT.md", after[2])
+
     def test_atomic_stage_and_commit(self):
         (self.repo_dir / "CONTEXT.md").write_text("Context\n")
         (self.repo_dir / "TODO.md").write_text("Todo\n")

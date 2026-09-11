@@ -3,6 +3,7 @@
 Subcommands::
 
     janitor sweep [repo ...]     regenerate CONTEXT.md / TODO.md
+    janitor branches [repo ...]  report branches and linked worktrees
     janitor overview [repo ...]  regenerate LLM-OVERVIEW.md
     janitor tidy [repo ...]      purge ephemeral trash + checkpoint abandoned WIP
     janitor status [repo ...]    report git status and last-run info per repo
@@ -39,6 +40,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from janitor.branch_review import collect_branch_report, render_branch_block
 from janitor.git_ops import get_repo_status
 from janitor.hygiene import (
     checkpoint_abandoned_wip,
@@ -143,6 +145,17 @@ def _run_status(repo: Path, state_mgr: StateManager) -> dict:
     }
 
 
+def _run_branches(repo: Path, no_fetch: bool) -> dict:
+    """Collect and render a report-only branch review for ``repo``."""
+    branch_review = collect_branch_report(repo, fetch=not no_fetch)
+    return {
+        "repo": repo.name,
+        "status": "ok",
+        "branch_review": branch_review,
+        "markdown": render_branch_block(branch_review),
+    }
+
+
 def _human_result(result: dict) -> str:
     """One ``[<status>] <repo-name>`` line with compact trailing details."""
     status = result.get("status", "error")
@@ -183,6 +196,8 @@ def _emit(results: list[dict], args: argparse.Namespace, run_id: str) -> None:
         return
     for result in results:
         print(_human_result(result))
+        if getattr(args, "command", None) == "branches" and result.get("markdown"):
+            print(result["markdown"])
         if result.get("status") == "dry_run":
             for key in _DRY_RUN_PREVIEW_KEYS:
                 if result.get(key):
@@ -211,7 +226,28 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="print merged previews without writing or committing anything",
     )
+    sp_sweep.add_argument(
+        "--no-fetch", action="store_true",
+        help="use cached remote-tracking refs without fetching",
+    )
     sp_sweep.add_argument("--json", action="store_true", help="emit JSON on stdout")
+
+    sp_branches = subparsers.add_parser(
+        "branches", help="report branches and linked worktrees without branch actions"
+    )
+    sp_branches.add_argument(
+        "repos", nargs="*", type=Path,
+        help="target repositories (default: current directory, else the fleet)",
+    )
+    sp_branches.add_argument(
+        "--all", action="store_true",
+        help="target every git repository under the workspace",
+    )
+    sp_branches.add_argument(
+        "--no-fetch", action="store_true",
+        help="use cached remote-tracking refs without fetching",
+    )
+    sp_branches.add_argument("--json", action="store_true", help="emit JSON on stdout")
 
     sp_overview = subparsers.add_parser(
         "overview", help="regenerate LLM-OVERVIEW.md from AGENTS.md and git history"
@@ -262,15 +298,24 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     """Run one janitor job across its target repos; return the exit code."""
     args = _build_parser().parse_args(argv)
-    state_mgr = _state_manager()
+    # Branch reports are intentionally independent of persistent StateManager
+    # state. Construct it only for commands that use the existing stateful
+    # paths.
+    state_mgr = None if args.command == "branches" else _state_manager()
     run_id = f"run_{int(time.time())}"
 
     results: list[dict] = []
     for repo in _resolve_targets(args):
         try:
-            if args.command == "sweep":
+            if args.command == "branches":
+                result = _run_branches(repo, no_fetch=args.no_fetch)
+            elif args.command == "sweep":
                 result = sweep_repo(
-                    repo, state_mgr, run_id, dry_run=getattr(args, "dry_run", False)
+                    repo,
+                    state_mgr,
+                    run_id,
+                    dry_run=getattr(args, "dry_run", False),
+                    no_fetch=args.no_fetch,
                 )
             elif args.command == "overview":
                 result = overview_repo(

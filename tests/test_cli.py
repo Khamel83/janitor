@@ -123,7 +123,7 @@ class SweepCommandTests(CliTestCase):
         self.assertEqual(call_args[0], repo.resolve())
         self.assertIsInstance(call_args[1], StateManager)
         self.assertTrue(call_args[2].startswith("run_"))
-        self.assertEqual(call_kwargs, {"dry_run": True})
+        self.assertEqual(call_kwargs, {"dry_run": True, "no_fetch": False})
         lines = out.splitlines()
         self.assertEqual(lines[0], "[dry_run] demo")
         self.assertIn("CONTEXT-PREVIEW", out)
@@ -166,7 +166,7 @@ class SweepCommandTests(CliTestCase):
             (fleet / name / ".git").mkdir(parents=True)
         (fleet / "not-a-repo").mkdir()
 
-        def fake_sweep(repo, state_mgr, run_id, dry_run=False):
+        def fake_sweep(repo, state_mgr, run_id, dry_run=False, no_fetch=False):
             return {"repo": repo.name, "status": "quiet", "tokens_spent": 0}
 
         with patch("janitor.cli.sweep_repo", side_effect=fake_sweep) as sweep:
@@ -198,7 +198,7 @@ class SweepCommandTests(CliTestCase):
             (fleet / name / ".git").mkdir(parents=True)
         outside = self.plain_dir("elsewhere")  # no .git in cwd
 
-        def fake_sweep(repo, state_mgr, run_id, dry_run=False):
+        def fake_sweep(repo, state_mgr, run_id, dry_run=False, no_fetch=False):
             return {"repo": repo.name, "status": "quiet", "tokens_spent": 0}
 
         with patch("janitor.cli.sweep_repo", side_effect=fake_sweep) as sweep:
@@ -209,6 +209,72 @@ class SweepCommandTests(CliTestCase):
             [c.args[0].resolve() for c in sweep.call_args_list],
             [(fleet / n).resolve() for n in ("one", "two")],
         )
+
+
+class BranchesCommandTests(CliTestCase):
+    def test_branches_json_uses_collector_and_no_fetch(self):
+        repo = self.fake_repo("demo")
+        expected = {
+            "repo": "demo",
+            "status": "ok",
+            "branch_review": {
+                "branches": [{"name": "main"}],
+                "report_stale": True,
+            },
+            "markdown": "BRANCHES",
+        }
+        with patch("janitor.cli.collect_branch_report") as collect, patch(
+            "janitor.cli.render_branch_block", return_value="BRANCHES"
+        ) as render:
+            collect.return_value = expected["branch_review"]
+            code, out = self.run_cli(
+                ["branches", "--json", "--no-fetch", str(repo)]
+            )
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["results"][0]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["branch_review"], expected["branch_review"])
+        self.assertEqual(result["markdown"], "BRANCHES")
+        collect.assert_called_once_with(repo.resolve(), fetch=False)
+        render.assert_called_once_with(expected["branch_review"])
+
+    def test_sweep_no_fetch_is_forwarded(self):
+        repo = self.fake_repo("demo")
+        with patch(
+            "janitor.cli.sweep_repo",
+            return_value={"repo": "demo", "status": "quiet"},
+        ) as sweep:
+            self.assertEqual(self.run_cli(["sweep", "--no-fetch", str(repo)])[0], 0)
+
+        self.assertEqual(sweep.call_args.kwargs["no_fetch"], True)
+
+    def test_branches_human_output_contains_all_rows(self):
+        repo = self.fake_repo("demo")
+        report = {"branches": [{"name": "main"}], "report_stale": False}
+        with patch(
+            "janitor.cli.collect_branch_report", return_value=report
+        ), patch("janitor.cli.render_branch_block", return_value="| main |"):
+            code, out = self.run_cli(["branches", str(repo)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("[ok] demo", out)
+        self.assertIn("| main |", out)
+
+    def test_branches_does_not_construct_state_or_run_sweep_paths(self):
+        repo = self.fake_repo("demo")
+        report = {"branches": [], "report_stale": False}
+        with patch("janitor.cli._state_manager") as state_manager, patch(
+            "janitor.cli._run_tidy"
+        ) as tidy, patch("janitor.cli.sweep_repo") as sweep, patch(
+            "janitor.cli.collect_branch_report", return_value=report
+        ), patch("janitor.cli.render_branch_block", return_value="BRANCHES"):
+            code, _out = self.run_cli(["branches", str(repo)])
+
+        self.assertEqual(code, 0)
+        state_manager.assert_not_called()
+        tidy.assert_not_called()
+        sweep.assert_not_called()
 
 
 class OverviewCommandTests(CliTestCase):
@@ -406,7 +472,7 @@ class ExitCodeTests(CliTestCase):
         for name in ("good", "bad"):
             (fleet / name / ".git").mkdir(parents=True)
 
-        def fake_sweep(repo, state_mgr, run_id, dry_run=False):
+        def fake_sweep(repo, state_mgr, run_id, dry_run=False, no_fetch=False):
             if repo.name == "bad":
                 return {"repo": repo.name, "status": "synthesis_failed", "raw": "x"}
             return {"repo": repo.name, "status": "quiet", "tokens_spent": 0}

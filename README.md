@@ -90,6 +90,13 @@ janitor sweep --all
 # Preview sweep without modifying files
 janitor sweep --dry-run
 
+# Review branches and linked worktrees without branch actions
+janitor branches [repo ...] [--all] [--json] [--no-fetch]
+janitor branches /Volumes/2TB_SSD/GitHub/maya --no-fetch
+
+# Sweep while using cached remote-tracking refs
+janitor sweep --no-fetch
+
 # Tidy ephemeral trash and checkpoint abandoned work
 janitor tidy
 janitor tidy --all
@@ -101,6 +108,23 @@ janitor overview --all
 # Machine-readable JSON output (used by Homelab & Baywatch)
 janitor sweep --all --json
 ```
+
+### Branch and worktree review
+
+`janitor branches` inventories local branch refs, cached remote-tracking refs,
+and linked worktrees. Matching local and remote refs appear as one logical
+branch, while local-only and remote-only refs remain visible. The report uses a
+single bounded fetch of the primary remote unless `--no-fetch` is supplied.
+Failed, disabled, or unavailable refreshes continue from cached refs and mark
+the freshness as stale.
+
+This command is report-only: it does not check out, merge, rebase, reset,
+delete, prune, or push branches, and it does not write `CONTEXT.md`,
+`TODO.md`, or Janitor state. The human output includes the deterministic branch
+review block; `--json` keeps the complete `branch_review` and rendered
+`markdown` in the existing JSON envelope. Nightly `janitor sweep` uses the
+same collector and deterministic block, and `sweep --no-fetch` passes the
+fetch suppression through to that review.
 
 ---
 

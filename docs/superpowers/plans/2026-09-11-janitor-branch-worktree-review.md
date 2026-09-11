@@ -1,6 +1,8 @@
 # Janitor Branch and Worktree Review Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+>
+> **Execution status (2026-09-11):** Implemented and merged locally into `main` at `780767a`. The merged tree passes `PYTHONPATH=. pytest -q` (159 tests), `ruff check janitor tests`, and `git diff --check`. The feature worktree and branch were removed after verification; the local merge has not been pushed.
 
 **Goal:** Add a deterministic, local-first, report-only branch and worktree review to Janitor, available in nightly sweeps and through 'janitor branches'.
 

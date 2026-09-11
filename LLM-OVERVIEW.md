@@ -1,10 +1,10 @@
 # LLM-OVERVIEW — janitor
-> Current compressed briefing. Updated 2026-09-08. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
+> Current compressed briefing. Updated 2026-09-11. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
 
 ## What this repo is
-Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using Gateway2000 (`g2k-bg`) with fallback to free models ($0).
+Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using Gateway2000 (`g2k-bg`) with fallback to free models ($0).
 
-The system operates under strict safety invariants: preflight git guards skip repos undergoing interactive operations (merge, rebase, bisect, cherry-pick) or holding index locks; atomic stage/commit operations abort if extraneous files are staged; commit trailers (`Janitor-Run: <run_id>`) prevent self-triggering feedback loops; secret exclusions block `.env*` and key files; and SHA-256 input hashing skips unnecessary LLM calls when repository state is unchanged.
+The system operates under strict safety invariants: preflight git guards skip repos undergoing interactive operations (merge, rebase, bisect, cherry-pick) or holding index locks; atomic stage/commit operations abort if extraneous files are staged; commit trailers (`Janitor-Run: <run_id>`) prevent self-triggering feedback loops; secret exclusions block `.env*` and key files; branch review never checks out, merges, deletes, resets, or pushes; and SHA-256 input hashing skips unnecessary LLM calls when repository state is unchanged.
 
 ## Machine & Host Ownership
 - **Homelab Linux Host (`ssh homelab`, Ubuntu 24.04)**:
@@ -20,16 +20,23 @@ The system operates under strict safety invariants: preflight git guards skip re
 
 ## What is actually built
 - **`janitor.cli` (CLI & Fleet Discovery)**:
-  - Command line parser and runner supporting subcommands: `sweep`, `overview`, `tidy`, and `status`.
+  - Command line parser and runner supporting subcommands: `sweep`, `branches`, `overview`, `tidy`, and `status`.
   - Discovers child repositories directly under `JANITOR_WORKSPACE` (defaults to `/Volumes/2TB_SSD/GitHub`).
-  - Supports `--all` (fleet mode), explicit repo paths, `--dry-run` (prints merged/synthesized previews without writing or committing), and `--json` (structured output).
+  - Supports `--all` (fleet mode), explicit repo paths, `--dry-run` (prints merged/synthesized previews without writing or committing), `--no-fetch` (use cached remote-tracking refs), and `--json` (structured output).
   - Handles per-repo execution failures gracefully so single-repo errors do not abort fleet runs. Exits 1 on synthesis or execution errors.
+- **`janitor.branch_review` (Deterministic branch/worktree review)**:
+  - `collect_branch_report` performs one bounded primary-remote refresh unless fetch is disabled, then inventories local refs, cached remote-tracking refs, and linked worktrees without checking anything out.
+  - Groups matching local and remote refs into logical branches, compares each usable tip with the discovered default branch, and classifies branches as active, aging, stale, or abandoned `auto-wip`.
+  - Records bounded evidence: ahead/behind/merged state, recent subjects, changed paths, branch-local `CONTEXT.md`/`TODO.md` excerpts, worktree status, and attention flags. Failed inventory queries are marked incomplete instead of being treated as empty.
+  - Renders a stable report-only Markdown block for `CONTEXT.md` and a complete JSON report for CLI and future Homelab consumers. A fetch may prune stale remote-tracking refs; local branches are never pruned.
 - **`janitor.git_ops` (Safe Git Engine)**:
-  - Preflight safety guards (`check_preflight_guards`): skips repos mid-operation (merge, rebase, bisect, cherry-pick), locked (`.git/index.lock`), or on detached HEADs.
+  - Preflight safety guards (`check_preflight_guards`): resolve linked-worktree and common Git metadata, then skip repos mid-operation (merge, rebase, bisect, cherry-pick), locked (`.git/index.lock`), or on detached HEADs. Git probes are timeout-bounded.
   - Atomic commit staging (`atomic_stage_and_commit`): stages only designated files, verifies index purity, appends `Janitor-Run: <run_id>` trailers.
   - Deterministic loop prevention (`has_24h_activity`): excludes janitor commits from activity windows; uses absolute ISO-8601 `%cI` timestamps for deterministic SHA-256 input hashing.
 - **`janitor.reconciler` (Living Document Engine)**:
   - Idempotent sentinel block merging (`merge_sentinel_block`): updates tagged regions (`recent` tag in `CONTEXT.md`, `todo` tag in `TODO.md`).
+  - Branch prepass: integrates the deterministic branch report into the `branches` sentinel block before normal quiet-path and model decisions, while masking that block from normal synthesis prompts.
+  - Branch-only changes on a clean discovered default-branch checkout may commit only `CONTEXT.md`; dirty or non-default checkouts remain report-only. Generated branch evidence and Janitor commits are excluded from continuity inputs to prevent repeat commits.
   - First-run bootstrap: automatically appends sentinel blocks to existing human-authored docs without clobbering text.
   - Integrated Butler auto-tidy pre-pass in `sweep_repo`: automatically purges cache droppings and checkpoints stale abandoned work (>6h) before running the sweep.
   - Content hash gating (`_sweep_input_hash`): SHA-256 hashing over porcelain status, recent log, and diff to bypass unchanged repos.
@@ -44,7 +51,7 @@ The system operates under strict safety invariants: preflight git guards skip re
 - **`janitor.state` (Persistent State Layer)**:
   - `StateManager` rooted at `~/.local/state/janitor/state.json` (overridden via `JANITOR_STATE_DIR`).
   - Normalizes task text to stable `tk_<hash>` IDs.
-  - Tracks per-repo input hashes (`last_hash`), execution history (`last_run`), and WIP branch records (`wip_branches`).
+  - Tracks per-repo input hashes (`last_hash`), execution history (`last_run`), WIP branch records (`wip_branches`), branch continuity, and 90-day missing-branch tombstones.
 - **`janitor.worker` (Model Gateway Backend)**:
   - Model dispatching via `call_free` and `extract_structured`.
   - Streams prompts over stdin to local Gateway2000 CLI (`g2k-bg` or `g2k`) to prevent system `ARG_MAX` limits.
@@ -57,7 +64,8 @@ The system operates under strict safety invariants: preflight git guards skip re
 ## Canonical entry points
 - `janitor status --all`: Instant health check across all 80 fleet repositories.
 - `janitor sweep [--all]`: Reconcile living documentation (`CONTEXT.md`, `TODO.md`) with auto-tidy pre-pass.
+- `janitor branches [repo ...] [--all] [--json] [--no-fetch]`: Review local/remote-tracking branches and linked worktrees without branch actions.
 - `janitor tidy [--all]`: Purge cache droppings and checkpoint abandoned WIP to `auto-wip/` branches.
 - `janitor overview [--all]`: Synthesize deep architectural map and mirror to `/Volumes/2TB_SSD/GitHub/docs/repos/`.
-- `python3 -m unittest discover -s tests -v`: Full offline unit test suite (90 tests).
+- `PYTHONPATH=. pytest -q`: Full offline unit test suite (159 tests).
 - `systemctl --user list-timers | grep janitor`: Inspect active Homelab timers (on `ssh homelab`).

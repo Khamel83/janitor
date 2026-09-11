@@ -16,4 +16,6 @@
 - [x] Adjust systemd timer to 3:00 AM America/Los_Angeles on Homelab
 - [x] Archive legacy Mintlify starter files in `docs` repo and populate 80 fleet overviews in `docs/repos/`
 - [x] Integrate Butler auto-tidy pre-pass into `sweep_repo` and remove dead `docs.py` code (`0f2bf86`)
+- [x] Add deterministic report-only branch/worktree review to CLI and nightly sweep (`780767a`)
+- [ ] Add morning/next-login reminders for branch attention (roadmap; v1 remains report-only)
 <!-- janitor:end:todo -->

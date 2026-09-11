@@ -251,6 +251,59 @@ class TestBranchCollector(BranchReviewFixture):
         self.assertEqual(report["worktrees"], [])
         self.assertTrue(report["report_stale"])
 
+    def test_remote_query_failure_is_not_reported_as_no_remote(self):
+        with mock.patch.object(
+            branch_review,
+            "_run_git",
+            return_value=branch_review._GitResult(
+                124, "", "timed out", timed_out=True
+            ),
+        ):
+            result = branch_review._fetch_primary_remote(self.repo, enabled=False)
+
+        self.assertEqual(result["status"], "query_error")
+        self.assertTrue(result["timed_out"])
+
+    def test_symbolic_default_query_failure_blocks_fallback(self):
+        def fail_symbolic(repo_dir, args, **kwargs):
+            if args[1:3] == ["symbolic-ref", "-q"]:
+                return branch_review._GitResult(128, "", "symbolic query failed")
+            return branch_review._GitResult(0, "a" * 40 + "\n", "")
+
+        with mock.patch.object(branch_review, "_run_git", side_effect=fail_symbolic):
+            base = branch_review._discover_base(self.repo, "origin")
+
+        self.assertEqual(base["status"], "query_error")
+        self.assertIsNone(base["branch"])
+
+    def test_failed_evidence_queries_are_explicit_and_rendered(self):
+        original = branch_review._run_git
+
+        def fail_evidence(repo_dir, args, **kwargs):
+            if args[1:2] == ["log"] and "--format=%s" in args:
+                return branch_review._GitResult(128, "", "log query failed")
+            if args[1:2] == ["show"]:
+                return branch_review._GitResult(128, "", "show query failed")
+            if args[1:2] == ["diff"]:
+                return branch_review._GitResult(128, "", "diff query failed")
+            return original(repo_dir, args, **kwargs)
+
+        with mock.patch.object(branch_review, "_run_git", side_effect=fail_evidence):
+            report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
+
+        feature = next(row for row in report["branches"] if row["name"] == "feature")
+        self.assertEqual(
+            feature["evidence"]["recent_subjects_status"]["status"],
+            "query_error",
+        )
+        self.assertEqual(
+            feature["evidence"]["documents_status"]["CONTEXT.md"]["status"],
+            "query_error",
+        )
+        self.assertEqual(feature["tip"]["comparison"]["diff_status"], "query_error")
+        self.assertIn("query_error", feature["focus"])
+        self.assertIn("query_error", render_branch_block(report))
+
     def test_report_contract_contains_required_fields_and_repository_evidence(self):
         report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
         self.assertEqual(
@@ -268,6 +321,8 @@ class TestBranchCollector(BranchReviewFixture):
             },
             set(report),
         )
+        self.assertEqual(report["inventory"]["status"], "complete")
+        self.assertEqual(report["inventory"]["discovery"]["status"], "ok")
         required_row_fields = {
             "name",
             "local_ref",
@@ -571,6 +626,23 @@ class TestBranchRenderer(unittest.TestCase):
         )
         self.assertIn("Freshness: stale (no_remote)", text)
         self.assertIn("| remote | active | local | ? | ? |", text)
+
+    def test_incomplete_inventory_is_visible_in_markdown(self):
+        text = render_branch_block(
+            self._report(
+                [],
+                inventory={
+                    "status": "incomplete",
+                    "discovery": {"status": "query_error"},
+                    "refs": {"status": "query_error"},
+                    "worktrees": {"status": "ok"},
+                },
+            )
+        )
+        self.assertIn(
+            "Inventory: incomplete (discovery: query_error, refs: query_error, worktrees: ok)",
+            text,
+        )
 
     def test_repeated_render_is_byte_identical(self):
         report = self._report([self._row("main")])

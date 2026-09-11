@@ -84,19 +84,50 @@ def _run_git(
     )
 
 
+def _timed_out(result: _GitResult) -> bool:
+    return bool(getattr(result, "timed_out", False))
+
+
+def _discovery_query_status(result: _GitResult) -> dict:
+    if result.returncode == 0:
+        return {"status": "ok", "timed_out": False}
+    if result.returncode == 1 and not _timed_out(result):
+        return {"status": "not_found", "timed_out": False}
+    return {"status": "query_error", "timed_out": _timed_out(result)}
+
+
 def _fetch_primary_remote(repo_dir: Path, *, enabled: bool) -> dict:
     remotes = _run_git(repo_dir, ["git", "remote"])
+    if remotes.returncode != 0:
+        return {
+            "status": "query_error",
+            "remote": None,
+            "attempted": False,
+            "timed_out": _timed_out(remotes),
+            "reason": "remote discovery query failed",
+        }
     remote_names = sorted(
         {line.strip() for line in remotes.stdout.splitlines() if line.strip()}
     )
     if "origin" in remote_names:
         primary = "origin"
     else:
-        cached_default_remotes = [
-            remote
-            for remote in remote_names
-            if _cached_remote_default_ref(repo_dir, remote) is not None
-        ]
+        cached_default_remotes = []
+        discovery_failed = False
+        for remote in remote_names:
+            default_ref, query_status = _cached_remote_default_ref(repo_dir, remote)
+            if default_ref:
+                cached_default_remotes.append(remote)
+            elif query_status["status"] == "query_error":
+                discovery_failed = True
+        if not cached_default_remotes and discovery_failed:
+            return {
+                "status": "query_error",
+                "remote": None,
+                "attempted": False,
+                "timed_out": False,
+                "reason": "remote default discovery query failed",
+            }
         primary = (
             cached_default_remotes[0]
             if cached_default_remotes
@@ -160,33 +191,47 @@ def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     return sha[0] if sha else None
 
 
-def _cached_remote_default_ref(repo_dir: Path, remote: str) -> str | None:
+def _cached_remote_default_ref(repo_dir: Path, remote: str) -> tuple[str | None, dict]:
     """Return a usable cached symbolic default ref for ``remote``."""
     result = _run_git(
         repo_dir,
         ["git", "symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD"],
     )
-    if result.returncode != 0:
-        return None
+    query_status = _discovery_query_status(result)
+    if query_status["status"] not in {"ok", "not_found"}:
+        return None, query_status
     symbolic_ref = result.stdout.strip().splitlines()
     if not symbolic_ref:
-        return None
+        return None, {"status": "not_found", "timed_out": False}
     symbolic_ref = symbolic_ref[0]
     if not symbolic_ref.startswith("refs/"):
         symbolic_ref = f"refs/remotes/{symbolic_ref}"
     prefix = f"refs/remotes/{remote}/"
     if not symbolic_ref.startswith(prefix):
-        return None
+        return None, {"status": "not_found", "timed_out": False}
     branch = symbolic_ref[len(prefix) :]
     if not branch or branch == "HEAD":
-        return None
-    return symbolic_ref if _resolve_ref(repo_dir, symbolic_ref) else None
+        return None, {"status": "not_found", "timed_out": False}
+    if _resolve_ref(repo_dir, symbolic_ref):
+        return symbolic_ref, {"status": "ok", "timed_out": False}
+    return None, {"status": "not_found", "timed_out": False}
 
 
 def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
     candidates: list[tuple[str, str]] = []
     if primary_remote:
-        symbolic_ref = _cached_remote_default_ref(repo_dir, primary_remote)
+        symbolic_ref, symbolic_status = _cached_remote_default_ref(
+            repo_dir, primary_remote
+        )
+        if symbolic_status["status"] == "query_error":
+            return {
+                "status": "query_error",
+                "branch": None,
+                "local_branch": None,
+                "ref": None,
+                "sha": None,
+                "timed_out": symbolic_status["timed_out"],
+            }
         if symbolic_ref:
             prefix = f"refs/remotes/{primary_remote}/"
             candidates.append((symbolic_ref[len(prefix) :], symbolic_ref))
@@ -224,7 +269,7 @@ def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
 def _query_inventory_status(result: _GitResult) -> dict:
     if result.returncode == 0:
         return {"status": "ok", "timed_out": False}
-    return {"status": "query_error", "timed_out": result.timed_out}
+    return {"status": "query_error", "timed_out": _timed_out(result)}
 
 
 def _collect_refs_with_status(repo_dir: Path) -> tuple[list[dict], dict]:
@@ -360,9 +405,10 @@ def _collect_worktrees(repo_dir: Path) -> list[dict]:
     return _collect_worktrees_with_status(repo_dir)[0]
 
 
-def _unknown_comparison(status: str = "unknown") -> dict:
+def _unknown_comparison(status: str = "unknown", *, timed_out: bool = False) -> dict:
     return {
         "status": status,
+        "timed_out": timed_out,
         "ahead": None,
         "behind": None,
         "merged": None,
@@ -376,23 +422,28 @@ def _compare_ref(repo_dir: Path, base_ref: str | None, ref: str) -> dict:
         return _unknown_comparison("base_unavailable")
     common_ancestor = _run_git(repo_dir, ["git", "merge-base", base_ref, ref])
     if common_ancestor.returncode != 0:
-        return _unknown_comparison("no_common_ancestor")
+        status = (
+            "no_common_ancestor"
+            if common_ancestor.returncode == 1 and not _timed_out(common_ancestor)
+            else "query_error"
+        )
+        return _unknown_comparison(status, timed_out=_timed_out(common_ancestor))
     counts = _run_git(
         repo_dir, ["git", "rev-list", "--left-right", "--count", f"{base_ref}...{ref}"]
     )
     if counts.returncode != 0:
-        return _unknown_comparison("no_common_ancestor")
+        return _unknown_comparison("query_error", timed_out=_timed_out(counts))
     try:
         behind_text, ahead_text = counts.stdout.strip().split()[:2]
         behind, ahead = int(behind_text), int(ahead_text)
     except (ValueError, IndexError):
-        return _unknown_comparison("comparison_unknown")
+        return _unknown_comparison("query_error")
 
     merged_result = _run_git(
         repo_dir, ["git", "merge-base", "--is-ancestor", ref, base_ref]
     )
     if merged_result.returncode not in (0, 1):
-        return _unknown_comparison("no_common_ancestor")
+        return _unknown_comparison("query_error", timed_out=_timed_out(merged_result))
     merged = merged_result.returncode == 0
     diff = _run_git(
         repo_dir,
@@ -418,6 +469,7 @@ def _compare_ref(repo_dir: Path, base_ref: str | None, ref: str) -> dict:
     }
     if diff_status != "ok":
         comparison["diff_status"] = diff_status
+        comparison["diff_timed_out"] = _timed_out(diff)
     return comparison
 
 
@@ -462,25 +514,50 @@ def _classify(row: dict, now_epoch: int) -> tuple[str, list[str]]:
     return classification, [flag for flag in _FLAG_ORDER if flag in flags]
 
 
-def _recent_subjects(repo_dir: Path, ref: str) -> list[str]:
+def _recent_subjects_with_status(repo_dir: Path, ref: str) -> tuple[list[str], dict]:
     result = _run_git(
         repo_dir, ["git", "log", "-n", str(MAX_RECENT_SUBJECTS), "--format=%s", ref]
     )
     if result.returncode != 0:
-        return []
-    return result.stdout.splitlines()[:MAX_RECENT_SUBJECTS]
+        return [], _query_inventory_status(result)
+    return result.stdout.splitlines()[:MAX_RECENT_SUBJECTS], _query_inventory_status(
+        result
+    )
 
 
-def _document_evidence(repo_dir: Path, ref: str) -> dict:
+def _recent_subjects(repo_dir: Path, ref: str) -> list[str]:
+    """Return recent subjects while preserving the original list-only contract."""
+    return _recent_subjects_with_status(repo_dir, ref)[0]
+
+
+def _document_evidence_with_status(repo_dir: Path, ref: str) -> tuple[dict, dict]:
     documents: dict[str, dict[str, str]] = {}
+    statuses: dict[str, dict] = {}
     for filename in ("CONTEXT.md", "TODO.md"):
+        listing = _run_git(
+            repo_dir, ["git", "ls-tree", "-r", "--name-only", ref, "--", filename]
+        )
+        if listing.returncode != 0:
+            statuses[filename] = _query_inventory_status(listing)
+            continue
+        if filename not in listing.stdout.splitlines():
+            statuses[filename] = {"status": "not_found", "timed_out": False}
+            continue
         result = _run_git(repo_dir, ["git", "show", f"{ref}:{filename}"])
         if result.returncode == 0:
             documents[filename] = {
                 "source": "repository evidence",
                 "content": result.stdout[:MAX_DOC_EVIDENCE_CHARS],
             }
-    return documents
+            statuses[filename] = _query_inventory_status(result)
+        else:
+            statuses[filename] = _query_inventory_status(result)
+    return documents, statuses
+
+
+def _document_evidence(repo_dir: Path, ref: str) -> dict:
+    """Return document evidence while preserving the original dict contract."""
+    return _document_evidence_with_status(repo_dir, ref)[0]
 
 
 def _enrich_ref(repo_dir: Path, base_ref: str | None, ref: dict) -> dict:
@@ -489,7 +566,7 @@ def _enrich_ref(repo_dir: Path, base_ref: str | None, ref: dict) -> dict:
     return enriched
 
 
-def _focus(ref: dict) -> str:
+def _focus(ref: dict, document_status: dict | None = None) -> str:
     comparison = ref.get("comparison") or {}
     subjects = ref.get("recent_subjects") or []
     paths = comparison.get("changed_paths") or []
@@ -498,6 +575,19 @@ def _focus(ref: dict) -> str:
         pieces.append(f"subject: {subjects[0]}")
     if paths:
         pieces.append(f"paths: {', '.join(paths)}")
+    subjects_status = ref.get("recent_subjects_status") or {}
+    if subjects_status.get("status") not in {None, "ok"}:
+        pieces.append(f"subjects: {subjects_status['status']}")
+    comparison_status = comparison.get("status")
+    if comparison_status not in {None, "ok"}:
+        pieces.append(f"comparison: {comparison_status}")
+    if comparison.get("diff_status") not in {None, "ok"}:
+        pieces.append(f"changed paths: {comparison['diff_status']}")
+    if document_status:
+        for filename in ("CONTEXT.md", "TODO.md"):
+            status = document_status.get(filename, {}).get("status")
+            if status not in {None, "ok", "not_found"}:
+                pieces.append(f"{filename}: {status}")
     value = "; ".join(pieces) or "unknown"
     return value[:MAX_DOC_EVIDENCE_CHARS]
 
@@ -523,15 +613,40 @@ def collect_branch_report(
     observation = observation.astimezone(timezone.utc)
     fetch_result = _fetch_primary_remote(repo_dir, enabled=fetch)
     primary_remote = fetch_result.get("remote")
-    base = _discover_base(repo_dir, primary_remote)
+    if fetch_result.get("status") == "query_error":
+        base = {
+            "status": "query_error",
+            "branch": None,
+            "local_branch": None,
+            "ref": None,
+            "sha": None,
+        }
+        discovery_status = {
+            "status": "query_error",
+            "source": "remote",
+            "timed_out": bool(fetch_result.get("timed_out")),
+        }
+    else:
+        base = _discover_base(repo_dir, primary_remote)
+        discovery_status = {
+            "status": (
+                "query_error" if base.get("status") == "query_error" else "ok"
+            ),
+            "source": "base",
+            "timed_out": bool(base.get("timed_out")),
+        }
     raw_refs, refs_status = _collect_refs_with_status(repo_dir)
     worktrees, worktrees_status = _collect_worktrees_with_status(repo_dir)
     inventory = {
         "status": (
             "complete"
-            if refs_status["status"] == "ok" and worktrees_status["status"] == "ok"
+            if all(
+                status["status"] == "ok"
+                for status in (discovery_status, refs_status, worktrees_status)
+            )
             else "incomplete"
         ),
+        "discovery": discovery_status,
         "refs": refs_status,
         "worktrees": worktrees_status,
     }
@@ -568,10 +683,16 @@ def collect_branch_report(
             key=_worktree_sort_key,
         )
         tip = dict(tip)
-        tip["recent_subjects"] = _recent_subjects(repo_dir, tip["ref"])
-        documents = _document_evidence(repo_dir, tip["ref"])
+        tip["recent_subjects"], subjects_status = _recent_subjects_with_status(
+            repo_dir, tip["ref"]
+        )
+        tip["recent_subjects_status"] = subjects_status
+        documents, documents_status = _document_evidence_with_status(
+            repo_dir, tip["ref"]
+        )
         evidence = {
             "recent_subjects": tip["recent_subjects"],
+            "recent_subjects_status": subjects_status,
             "changed_paths": list(
                 (tip.get("comparison") or {}).get("changed_paths") or []
             ),
@@ -579,6 +700,7 @@ def collect_branch_report(
                 "changed_path_count"
             ),
             "documents": documents,
+            "documents_status": documents_status,
         }
         row = {
             "name": name,
@@ -589,7 +711,7 @@ def collect_branch_report(
             "worktrees": attached,
             "classification": "stale",
             "attention_flags": [],
-            "focus": _focus(tip),
+            "focus": _focus(tip, documents_status),
             "evidence": evidence,
         }
         row["classification"], row["attention_flags"] = _classify(
@@ -709,7 +831,7 @@ def render_branch_block(report: dict) -> str:
     if inventory.get("status") == "incomplete":
         details = ", ".join(
             f"{name}: {_markdown_cell((inventory.get(name) or {}).get('status', 'unknown'))}"
-            for name in ("refs", "worktrees")
+            for name in ("discovery", "refs", "worktrees")
         )
         inventory_line = [f"Inventory: incomplete ({details})"]
 

@@ -147,6 +147,8 @@ def _run_status(repo: Path, state_mgr: StateManager) -> dict:
 
 def _run_branches(repo: Path, no_fetch: bool) -> dict:
     """Collect and render a report-only branch review for ``repo``."""
+    if not (repo / ".git").exists():
+        return {"repo": repo.name, "status": "skipped", "reason": "not_a_git_repo"}
     branch_review = collect_branch_report(repo, fetch=not no_fetch)
     return {
         "repo": repo.name,

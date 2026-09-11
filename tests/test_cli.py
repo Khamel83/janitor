@@ -276,6 +276,23 @@ class BranchesCommandTests(CliTestCase):
         tidy.assert_not_called()
         sweep.assert_not_called()
 
+    def test_branches_skips_non_git_target_without_collecting(self):
+        repo = self.plain_dir("not-a-repo")
+        with patch("janitor.cli.collect_branch_report") as collect:
+            code, out = self.run_cli(["branches", "--json", str(repo)])
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["results"][0]
+        self.assertEqual(
+            result,
+            {
+                "repo": "not-a-repo",
+                "status": "skipped",
+                "reason": "not_a_git_repo",
+            },
+        )
+        collect.assert_not_called()
+
 
 class OverviewCommandTests(CliTestCase):
     def test_overview_dry_run_prints_synthesized_preview(self):

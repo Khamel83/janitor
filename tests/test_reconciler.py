@@ -837,6 +837,10 @@ class TestSweepRepo(unittest.TestCase):
         self.assertEqual(second["status"], "quiet")
         self.assertFalse(second["branch_changed"])
         self.assertEqual(second["branch_status"], "unchanged")
+        self.assertEqual(
+            first["branch_report"]["report_hash"],
+            second["branch_report"]["report_hash"],
+        )
         self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "2")
 
 

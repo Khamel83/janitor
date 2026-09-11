@@ -23,4 +23,5 @@ Thumbs.db
 .state/
 .janitor/
 .superpowers/
+.worktrees/
 *.log

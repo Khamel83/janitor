@@ -213,6 +213,44 @@ class TestBranchCollector(BranchReviewFixture):
         self.assertEqual(report["base"]["local_branch"], "release/stable")
         self.assertEqual(report["base"]["ref"], default_ref)
 
+    def test_failed_ref_inventory_is_explicitly_incomplete(self):
+        original = branch_review._run_git
+
+        def fail_refs(repo_dir, args, **kwargs):
+            if args[1:2] == ["for-each-ref"]:
+                return branch_review._GitResult(
+                    128, "", "ref inventory failed", timed_out=False
+                )
+            return original(repo_dir, args, **kwargs)
+
+        with mock.patch.object(branch_review, "_run_git", side_effect=fail_refs):
+            report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
+
+        self.assertEqual(report["inventory"]["status"], "incomplete")
+        self.assertEqual(report["inventory"]["refs"]["status"], "query_error")
+        self.assertEqual(report["branches"], [])
+        self.assertTrue(report["report_stale"])
+
+    def test_failed_worktree_inventory_is_explicitly_incomplete(self):
+        original = branch_review._run_git
+
+        def fail_worktrees(repo_dir, args, **kwargs):
+            if args[1:4] == ["worktree", "list", "--porcelain"]:
+                return branch_review._GitResult(
+                    128, "", "worktree inventory failed", timed_out=False
+                )
+            return original(repo_dir, args, **kwargs)
+
+        with mock.patch.object(
+            branch_review, "_run_git", side_effect=fail_worktrees
+        ):
+            report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
+
+        self.assertEqual(report["inventory"]["status"], "incomplete")
+        self.assertEqual(report["inventory"]["worktrees"]["status"], "query_error")
+        self.assertEqual(report["worktrees"], [])
+        self.assertTrue(report["report_stale"])
+
     def test_report_contract_contains_required_fields_and_repository_evidence(self):
         report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
         self.assertEqual(
@@ -224,6 +262,7 @@ class TestBranchCollector(BranchReviewFixture):
                 "base",
                 "branches",
                 "worktrees",
+                "inventory",
                 "attention_flags",
                 "report_hash",
             },

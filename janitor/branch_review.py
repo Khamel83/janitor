@@ -221,7 +221,13 @@ def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
     }
 
 
-def _collect_refs(repo_dir: Path) -> list[dict]:
+def _query_inventory_status(result: _GitResult) -> dict:
+    if result.returncode == 0:
+        return {"status": "ok", "timed_out": False}
+    return {"status": "query_error", "timed_out": result.timed_out}
+
+
+def _collect_refs_with_status(repo_dir: Path) -> tuple[list[dict], dict]:
     # ``%00`` asks Git to emit a NUL without placing an embedded NUL in the
     # subprocess argument itself.
     format_string = "%(refname)%00%(objectname)%00%(committerdate:unix)%00%(committerdate:iso-strict)%00%(subject)%00%(symref)"
@@ -236,7 +242,7 @@ def _collect_refs(repo_dir: Path) -> list[dict]:
         ],
     )
     if result.returncode != 0:
-        return []
+        return [], _query_inventory_status(result)
 
     refs: list[dict] = []
     # ``for-each-ref`` terminates each formatted record with a newline, while
@@ -282,7 +288,12 @@ def _collect_refs(repo_dir: Path) -> list[dict]:
                 "remote_name": remote_name,
             }
         )
-    return refs
+    return refs, _query_inventory_status(result)
+
+
+def _collect_refs(repo_dir: Path) -> list[dict]:
+    """Return refs while preserving the original list-only helper contract."""
+    return _collect_refs_with_status(repo_dir)[0]
 
 
 def _worktree_blocks(output: str) -> list[dict[str, str]]:
@@ -311,10 +322,10 @@ def _worktree_sort_key(worktree: dict) -> tuple[str, str, str, str]:
     )
 
 
-def _collect_worktrees(repo_dir: Path) -> list[dict]:
+def _collect_worktrees_with_status(repo_dir: Path) -> tuple[list[dict], dict]:
     result = _run_git(repo_dir, ["git", "worktree", "list", "--porcelain"])
     if result.returncode != 0:
-        return []
+        return [], _query_inventory_status(result)
     worktrees: list[dict] = []
     for block in _worktree_blocks(result.stdout):
         path_text = block.get("worktree")
@@ -341,7 +352,12 @@ def _collect_worktrees(repo_dir: Path) -> list[dict]:
         else:
             row["status"] = "dirty" if status.stdout else "clean"
         worktrees.append(row)
-    return sorted(worktrees, key=_worktree_sort_key)
+    return sorted(worktrees, key=_worktree_sort_key), _query_inventory_status(result)
+
+
+def _collect_worktrees(repo_dir: Path) -> list[dict]:
+    """Return worktrees while preserving the original list-only helper contract."""
+    return _collect_worktrees_with_status(repo_dir)[0]
 
 
 def _unknown_comparison(status: str = "unknown") -> dict:
@@ -508,8 +524,17 @@ def collect_branch_report(
     fetch_result = _fetch_primary_remote(repo_dir, enabled=fetch)
     primary_remote = fetch_result.get("remote")
     base = _discover_base(repo_dir, primary_remote)
-    raw_refs = _collect_refs(repo_dir)
-    worktrees = sorted(_collect_worktrees(repo_dir), key=_worktree_sort_key)
+    raw_refs, refs_status = _collect_refs_with_status(repo_dir)
+    worktrees, worktrees_status = _collect_worktrees_with_status(repo_dir)
+    inventory = {
+        "status": (
+            "complete"
+            if refs_status["status"] == "ok" and worktrees_status["status"] == "ok"
+            else "incomplete"
+        ),
+        "refs": refs_status,
+        "worktrees": worktrees_status,
+    }
 
     grouped: dict[str, list[dict]] = {}
     for ref in raw_refs:
@@ -573,10 +598,15 @@ def collect_branch_report(
         rows.append(row)
 
     rows.sort(key=_row_sort_key)
-    report_stale = fetch_result.get("status") != "fetched"
+    report_stale = (
+        fetch_result.get("status") != "fetched"
+        or inventory["status"] != "complete"
+    )
     attention_flags: list[str] = []
-    if report_stale:
+    if fetch_result.get("status") != "fetched":
         attention_flags.append("stale_fetch_data")
+    if inventory["status"] != "complete":
+        attention_flags.append("incomplete_inventory")
     for row in rows:
         for flag in row["attention_flags"]:
             if flag not in attention_flags:
@@ -589,6 +619,7 @@ def collect_branch_report(
         "base": base,
         "branches": rows,
         "worktrees": worktrees,
+        "inventory": inventory,
         "attention_flags": attention_flags,
         "report_hash": "",
     }
@@ -673,11 +704,21 @@ def render_branch_block(report: dict) -> str:
     else:
         base_text_freshness = "current"
 
+    inventory = report.get("inventory") or {}
+    inventory_line: list[str] = []
+    if inventory.get("status") == "incomplete":
+        details = ", ".join(
+            f"{name}: {_markdown_cell((inventory.get(name) or {}).get('status', 'unknown'))}"
+            for name in ("refs", "worktrees")
+        )
+        inventory_line = [f"Inventory: incomplete ({details})"]
+
     lines = [
         "<!-- janitor:begin:branches -->",
         "## Branch and Worktree Review",
         f"Base: {base_text}",
         f"Freshness: {base_text_freshness}",
+        *inventory_line,
         "",
         "| Branch | Class | Sources | Merged | Ahead/behind | Worktree | Evidence |",
         "| --- | --- | --- | --- | --- | --- | --- |",

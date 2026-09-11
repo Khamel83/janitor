@@ -211,7 +211,7 @@ def merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str:
     replacement = f"{begin_marker}\n{new_content.strip()}\n{end_marker}"
 
     if pattern.search(existing_text):
-        return pattern.sub(replacement, existing_text)
+        return pattern.sub(lambda _match: replacement, existing_text)
 
     separator = "\n" if existing_text and not existing_text.endswith(("\n", "\r")) else ""
     return f"{existing_text}{separator}{replacement}\n"
@@ -372,6 +372,10 @@ def sweep_repo(
     if not branch_report.get("report_hash"):
         branch_report = dict(branch_report)
         branch_report["report_hash"] = report_hash
+    inventory_complete = (
+        (branch_report.get("inventory") or {}).get("status", "complete")
+        == "complete"
+    )
 
     context_file = repo_dir / "CONTEXT.md"
     todo_file = repo_dir / "TODO.md"
@@ -384,7 +388,7 @@ def sweep_repo(
     new_branch_inner = _extract_sentinel_inner_exact(
         new_branch_block, BRANCH_SENTINEL_TAG
     )
-    branch_changed = existing_branch_inner != new_branch_inner
+    branch_changed = inventory_complete and existing_branch_inner != new_branch_inner
 
     status = get_repo_status(repo_dir)
     has_act, recent_log, recent_diff = has_24h_activity(repo_dir)
@@ -394,7 +398,7 @@ def sweep_repo(
         and state_mgr.get_last_input_hash(repo_dir.name) != curr_hash
     )
 
-    if not dry_run:
+    if not dry_run and inventory_complete:
         state_mgr.record_branch_observation(
             repo_dir.name,
             branch_report.get("branches", []),
@@ -472,7 +476,10 @@ def sweep_repo(
                 "raw": synthesis_raw,
             }
             return _attach_branch_result(
-                result, branch_report, branch_changed, "unchanged"
+                result,
+                branch_report,
+                branch_changed,
+                "incomplete" if not inventory_complete else "unchanged",
             )
         if changed_files or normal_needed:
             result = {
@@ -485,13 +492,22 @@ def sweep_repo(
                 result,
                 branch_report,
                 branch_changed,
-                "dry_run" if branch_changed else "unchanged",
+                (
+                    "incomplete"
+                    if not inventory_complete
+                    else ("dry_run" if branch_changed else "unchanged")
+                ),
             )
         fast_status = "quiet" if not status["is_dirty"] and not has_act else "unchanged_hash"
         result = {"repo": repo_dir.name, "status": fast_status, "tokens_spent": 0}
-        return _attach_branch_result(result, branch_report, branch_changed, "unchanged")
+        return _attach_branch_result(
+            result,
+            branch_report,
+            branch_changed,
+            "incomplete" if not inventory_complete else "unchanged",
+        )
 
-    branch_status = "unchanged"
+    branch_status = "unchanged" if inventory_complete else "incomplete"
     committed = False
     if changed_files:
         for filename, contents in (

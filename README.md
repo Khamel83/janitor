@@ -119,7 +119,8 @@ Failed, disabled, or unavailable refreshes continue from cached refs and mark
 the freshness as stale.
 
 This command is report-only: it does not check out, merge, rebase, reset,
-delete, prune, or push branches, and it does not write `CONTEXT.md`,
+delete, or push branches. A refresh may prune stale remote-tracking refs, but
+Janitor never prunes local branches. It does not write `CONTEXT.md`,
 `TODO.md`, or Janitor state. The human output includes the deterministic branch
 review block; `--json` keeps the complete `branch_review` and rendered
 `markdown` in the existing JSON envelope. Nightly `janitor sweep` uses the

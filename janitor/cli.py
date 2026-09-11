@@ -153,7 +153,12 @@ def _run_branches(repo: Path, no_fetch: bool) -> dict:
     branch_review = collect_branch_report(repo, fetch=not no_fetch)
     return {
         "repo": repo.name,
-        "status": "ok",
+        "status": (
+            "ok"
+            if (branch_review.get("inventory") or {}).get("status", "complete")
+            == "complete"
+            else "incomplete"
+        ),
         "branch_review": branch_review,
         "markdown": render_branch_block(branch_review),
     }

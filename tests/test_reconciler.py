@@ -158,6 +158,19 @@ class TestMergeSentinelBlock(unittest.TestCase):
         self.assertNotIn("- A", text)
         self.assertNotIn("- B", text)
 
+    def test_replacement_treats_backreferences_as_literal_content(self):
+        existing = (
+            "before\n<!-- janitor:begin:recent -->\nold\n"
+            "<!-- janitor:end:recent -->\nafter\n"
+        )
+        content = r"\g<0> \1 \q"
+
+        merged = merge_sentinel_block(existing, "recent", content)
+
+        self.assertIn(content, merged)
+        self.assertEqual(merged.count("<!-- janitor:begin:recent -->"), 1)
+        self.assertEqual(merged.count("<!-- janitor:end:recent -->"), 1)
+
     def test_extract_and_remove_sentinel_block_preserve_outside_bytes(self):
         text = (
             "before\n<!-- janitor:begin:branches -->\nold\n"
@@ -499,6 +512,39 @@ class TestSweepRepo(unittest.TestCase):
         self.assertEqual(context.count("<!-- janitor:begin:branches -->"), 1)
         self.assertEqual(context.count(end_marker), 1)
         self.assertNotIn(other_marker, context)
+
+    @patch("janitor.reconciler.render_branch_block", return_value="BRANCHES")
+    @patch("janitor.reconciler.collect_branch_report")
+    def test_incomplete_branch_inventory_preserves_existing_block(
+        self, collect, render
+    ):
+        repo = _git_repo(self.tmp)
+        existing = (
+            "human\n<!-- janitor:begin:branches -->\nlast valid report\n"
+            "<!-- janitor:end:branches -->\n"
+        )
+        _commit(
+            repo,
+            "initial",
+            files={"README.md": "hi\n", "CONTEXT.md": existing},
+            stamp=_old_stamp(),
+        )
+        report = fixture_branch_report(changed=True)
+        report["inventory"] = {
+            "status": "incomplete",
+            "refs": {"status": "query_error"},
+            "worktrees": {"status": "ok"},
+        }
+        collect.return_value = report
+        before = (repo / "CONTEXT.md").read_bytes()
+
+        result = sweep_repo(repo, self.sm, "run_incomplete_inventory", no_fetch=True)
+
+        self.assertEqual(result["branch_status"], "incomplete")
+        self.assertEqual(result["status"], "quiet")
+        self.assertEqual((repo / "CONTEXT.md").read_bytes(), before)
+        self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "1")
+        self.assertIsNone(self.sm.get_branch_review("repo"))
 
     @patch("janitor.reconciler.extract_structured")
     @patch(

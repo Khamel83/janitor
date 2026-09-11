@@ -23,6 +23,7 @@ AGING_DAYS = 30
 BRANCH_SENTINEL_TAG = "branches"
 
 _FETCH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=5"
+_JANITOR_TRAILER_GREP = "^Janitor-Run:"
 _SENTINEL_LIKE_COMMENT = re.compile(
     r"<!--\s*janitor\s*:\s*(?:begin|end)\s*:\s*[^>]*-->",
     re.IGNORECASE | re.DOTALL,
@@ -191,6 +192,38 @@ def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     return sha[0] if sha else None
 
 
+def _latest_non_janitor_commit(repo_dir: Path, ref: str) -> dict | None:
+    """Return the latest human commit used for semantic branch evidence."""
+    result = _run_git(
+        repo_dir,
+        [
+            "git",
+            "log",
+            "-n",
+            "1",
+            "--invert-grep",
+            f"--grep={_JANITOR_TRAILER_GREP}",
+            "--format=%H%x00%ct%x00%cI%x00%s",
+            ref,
+        ],
+    )
+    if result.returncode != 0:
+        return None
+    values = result.stdout.rstrip("\n").split("\x00", 3)
+    if len(values) != 4 or not values[0]:
+        return None
+    try:
+        timestamp = int(values[1])
+    except ValueError:
+        return None
+    return {
+        "sha": values[0],
+        "committer_timestamp": timestamp,
+        "committer_date": values[2],
+        "subject": values[3],
+    }
+
+
 def _cached_remote_default_ref(repo_dir: Path, remote: str) -> tuple[str | None, dict]:
     """Return a usable cached symbolic default ref for ``remote``."""
     result = _run_git(
@@ -251,12 +284,16 @@ def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
         seen.add(ref)
         sha = _resolve_ref(repo_dir, ref)
         if sha:
+            review_commit = _latest_non_janitor_commit(repo_dir, ref)
+            review_sha = review_commit["sha"] if review_commit else sha
             return {
                 "status": "ok",
                 "branch": branch,
                 "local_branch": branch,
                 "ref": ref,
                 "sha": sha,
+                "review_ref": review_sha,
+                "review_sha": review_sha,
             }
     return {
         "status": "base_unavailable",
@@ -383,6 +420,10 @@ def _collect_worktrees_with_status(repo_dir: Path) -> tuple[list[dict], dict]:
             "branch": block.get("branch"),
             "detached": block.get("branch") is None,
         }
+        if row["head"]:
+            review_commit = _latest_non_janitor_commit(repo_dir, row["head"])
+            if review_commit:
+                row["review_head"] = review_commit["sha"]
         if not path.is_dir():
             row["status"] = "missing"
             worktrees.append(row)
@@ -488,7 +529,9 @@ def _classify(row: dict, now_epoch: int) -> tuple[str, list[str]]:
         flags.add("unattached_local_branch")
 
     logical_name = row.get("name", "")
-    timestamp = tip.get("committer_timestamp")
+    timestamp = tip.get(
+        "review_committer_timestamp", tip.get("committer_timestamp")
+    )
     age = None if timestamp is None else max(0, now_epoch - timestamp)
     if logical_name.startswith("auto-wip/"):
         classification = "abandoned_auto_wip"
@@ -516,7 +559,17 @@ def _classify(row: dict, now_epoch: int) -> tuple[str, list[str]]:
 
 def _recent_subjects_with_status(repo_dir: Path, ref: str) -> tuple[list[str], dict]:
     result = _run_git(
-        repo_dir, ["git", "log", "-n", str(MAX_RECENT_SUBJECTS), "--format=%s", ref]
+        repo_dir,
+        [
+            "git",
+            "log",
+            "-n",
+            str(MAX_RECENT_SUBJECTS),
+            "--invert-grep",
+            f"--grep={_JANITOR_TRAILER_GREP}",
+            "--format=%s",
+            ref,
+        ],
     )
     if result.returncode != 0:
         return [], _query_inventory_status(result)
@@ -562,7 +615,30 @@ def _document_evidence(repo_dir: Path, ref: str) -> dict:
 
 def _enrich_ref(repo_dir: Path, base_ref: str | None, ref: dict) -> dict:
     enriched = dict(ref)
-    enriched["comparison"] = _compare_ref(repo_dir, base_ref, ref["ref"])
+    review_commit = _latest_non_janitor_commit(repo_dir, ref["ref"])
+    if review_commit:
+        enriched.update(
+            {
+                "review_sha": review_commit["sha"],
+                "review_committer_timestamp": review_commit[
+                    "committer_timestamp"
+                ],
+                "review_committer_date": review_commit["committer_date"],
+                "review_subject": review_commit["subject"],
+            }
+        )
+    else:
+        enriched.update(
+            {
+                "review_sha": ref["sha"],
+                "review_committer_timestamp": ref.get("committer_timestamp"),
+                "review_committer_date": ref.get("committer_date"),
+                "review_subject": ref.get("subject", ""),
+            }
+        )
+    enriched["comparison"] = _compare_ref(
+        repo_dir, base_ref, enriched["review_sha"]
+    )
     return enriched
 
 
@@ -594,7 +670,8 @@ def _focus(ref: dict, document_status: dict | None = None) -> str:
 
 def _row_sort_key(row: dict) -> tuple:
     flags = row.get("attention_flags") or []
-    timestamp = (row.get("tip") or {}).get("committer_timestamp")
+    tip = row.get("tip") or {}
+    timestamp = tip.get("review_committer_timestamp", tip.get("committer_timestamp"))
     return (
         0 if flags else 1,
         _CLASSIFICATION_RANK.get(row.get("classification"), 99),
@@ -654,7 +731,9 @@ def collect_branch_report(
     grouped: dict[str, list[dict]] = {}
     for ref in raw_refs:
         grouped.setdefault(ref["logical_name"], []).append(
-            _enrich_ref(repo_dir, base.get("ref"), ref)
+            _enrich_ref(
+                repo_dir, base.get("review_ref") or base.get("ref"), ref
+            )
         )
 
     rows: list[dict] = []
@@ -750,11 +829,41 @@ def collect_branch_report(
 
 
 def branch_report_hash(report: dict) -> str:
-    canonical = {
-        key: value
-        for key, value in report.items()
-        if key not in {"observed_at", "report_hash"}
-    }
+    def canonicalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if key in {
+                    "review_sha",
+                    "review_committer_timestamp",
+                    "review_committer_date",
+                    "review_subject",
+                    "review_head",
+                }:
+                    continue
+                if key == "sha" and "review_sha" in value:
+                    item = value["review_sha"]
+                elif key == "committer_timestamp" and "review_committer_timestamp" in value:
+                    item = value["review_committer_timestamp"]
+                elif key == "committer_date" and "review_committer_date" in value:
+                    item = value["review_committer_date"]
+                elif key == "subject" and "review_subject" in value:
+                    item = value["review_subject"]
+                elif key == "head" and "review_head" in value:
+                    item = value["review_head"]
+                result[key] = canonicalize(item)
+            return result
+        if isinstance(value, list):
+            return [canonicalize(item) for item in value]
+        return value
+
+    canonical = canonicalize(
+        {
+            key: value
+            for key, value in report.items()
+            if key not in {"observed_at", "report_hash"}
+        }
+    )
     fetch = canonical.get("fetch")
     if isinstance(fetch, dict):
         canonical["fetch"] = {
@@ -811,9 +920,8 @@ def _comparison_summary(row: dict) -> tuple[str, str]:
 def render_branch_block(report: dict) -> str:
     base = report.get("base") or {}
     if base.get("status") == "ok" and base.get("ref") and base.get("sha"):
-        base_text = (
-            f"{_markdown_cell(base['ref'])} @ {_markdown_cell(base['sha'])}"
-        )
+        base_sha = base.get("review_sha") or base["sha"]
+        base_text = f"{_markdown_cell(base['ref'])} @ {_markdown_cell(base_sha)}"
     else:
         base_text = (
             "unavailable ("
@@ -876,7 +984,7 @@ def render_branch_block(report: dict) -> str:
         for worktree in detached_worktrees:
             path = _markdown_cell(worktree.get("path", "unknown"))
             status = _markdown_cell(worktree.get("status", "unknown"))
-            head = worktree.get("head")
+            head = worktree.get("review_head") or worktree.get("head")
             head_text = f" @ {_markdown_cell(head)}" if head else ""
             lines.append(f"- {path} ({status}{head_text})")
     lines.append("<!-- janitor:end:branches -->")

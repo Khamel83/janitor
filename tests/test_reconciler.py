@@ -825,6 +825,20 @@ class TestSweepRepo(unittest.TestCase):
         self.assertEqual(second["status"], "unchanged_hash")
         self.assertEqual(extract.call_count, 1)
 
+    def test_own_branch_commit_does_not_retrigger_branch_report(self):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp(days=2))
+
+        first = sweep_repo(repo, self.sm, "run_branch_loop_1", no_fetch=True)
+        second = sweep_repo(repo, self.sm, "run_branch_loop_2", no_fetch=True)
+
+        self.assertEqual(first["status"], "committed")
+        self.assertTrue(first["branch_changed"])
+        self.assertEqual(second["status"], "quiet")
+        self.assertFalse(second["branch_changed"])
+        self.assertEqual(second["branch_status"], "unchanged")
+        self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "2")
+
 
 class TestOverviewRepo(unittest.TestCase):
     def setUp(self):

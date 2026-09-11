@@ -143,7 +143,7 @@ class StateManager:
             branches[name] = {
                 "first_seen": previous.get("first_seen", observed_at),
                 "last_seen": observed_at,
-                "last_sha": tip.get("sha"),
+                "last_sha": tip.get("review_sha", tip.get("sha")),
                 "classification": row.get("classification"),
                 "present": True,
                 "missing_since": None,

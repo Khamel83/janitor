@@ -27,13 +27,19 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from janitor.git_ops import (
     atomic_stage_and_commit,
     check_preflight_guards,
     get_repo_status,
     has_24h_activity,
+)
+from janitor.branch_review import (
+    BRANCH_SENTINEL_TAG,
+    branch_report_hash,
+    collect_branch_report,
+    render_branch_block,
 )
 from janitor.hygiene import checkpoint_abandoned_wip, is_wip_stale, purge_ephemeral_trash
 from janitor.state import StateManager
@@ -246,11 +252,83 @@ def _sweep_input_hash(
     return hashlib.sha256(input_str.encode("utf-8")).hexdigest()
 
 
+def _read_document(path: Path) -> tuple[str, bytes]:
+    """Read a UTF-8 document without normalizing newline bytes."""
+    if not path.exists():
+        return "", b""
+    raw = path.read_bytes()
+    return raw.decode("utf-8"), raw
+
+
+def _branch_observed_timestamp(report: dict) -> int:
+    """Return the report observation as epoch seconds for StateManager."""
+    observed_at = report.get("observed_at")
+    if isinstance(observed_at, str):
+        try:
+            observation = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            observation = None
+        if observation is not None:
+            if observation.tzinfo is None:
+                observation = observation.replace(tzinfo=timezone.utc)
+            return int(observation.timestamp())
+    return int(datetime.now(timezone.utc).timestamp())
+
+
+def _report_hash(report: dict) -> str:
+    """Return the collector's hash, filling it from canonical report data if absent."""
+    return report.get("report_hash") or branch_report_hash(report)
+
+
+def _attach_branch_result(
+    result: dict, report: dict, branch_changed: bool, branch_status: str
+) -> dict:
+    """Add branch details while retaining the existing sweep result shape."""
+    result["branch_report"] = report
+    result["branch_changed"] = branch_changed
+    result["branch_status"] = branch_status
+    return result
+
+
+def _commit_sweep_documents(
+    repo_dir: Path,
+    status: dict,
+    branch_report: dict,
+    changed_files: list[str],
+    branch_only: bool,
+    run_id: str,
+) -> bool:
+    """Commit changed managed documents only on a clean discovered default branch."""
+    if not changed_files or status["is_dirty"]:
+        return False
+
+    base = branch_report.get("base") or {}
+    # ``local_branch`` is the Task 4 contract. ``branch`` keeps this sweep
+    # compatible with the already-landed collector shape until its report
+    # includes the explicit local name.
+    default_branch = base.get("local_branch") or base.get("branch")
+    if status["branch"] != default_branch:
+        return False
+
+    if branch_only:
+        message = (
+            f"docs(janitor): update branch and worktree inventory for "
+            f"{status['sha']} [skip ci]"
+        )
+    else:
+        message = (
+            f"docs(janitor): sweep CONTEXT.md and TODO.md for "
+            f"{status['sha']} [skip ci]"
+        )
+    return atomic_stage_and_commit(repo_dir, changed_files, message, run_id)
+
+
 def sweep_repo(
     repo_dir: Path,
     state_mgr: StateManager,
     run_id: str,
     dry_run: bool = False,
+    no_fetch: bool = False,
 ) -> dict:
     """Regenerate CONTEXT.md and TODO.md inside their sentinel blocks.
 
@@ -258,19 +336,19 @@ def sweep_repo(
 
     1. Preflight guards: a repo mid-operation (merge, rebase, bisect,
        index lock, detached HEAD) is skipped untouched.
-    2. Zero-token fast path: a clean repo with no non-janitor activity in
-       the last 24h returns ``{"status": "quiet", "tokens_spent": 0}``.
-    3. Semantic hash gate: if the external state hashes to the same value
-       as the last sweep, returns ``unchanged_hash`` with zero tokens.
-    4. Otherwise the model synthesizes the new blocks (see SWEEP_PROMPT),
+    2. The deterministic branch report is collected independently of the
+       normal activity and input-hash gates.
+    3. Zero-token fast paths skip normal synthesis when a clean repo has no
+       non-janitor activity or its external input hash is unchanged.
+    4. Otherwise the model synthesizes the normal blocks (see SWEEP_PROMPT),
        which are merged into CONTEXT.md/TODO.md inside their sentinels.
-    5. When the working tree was clean on main/master, the two files are
-       committed atomically with a ``Janitor-Run:`` trailer. On a dirty
-       tree the files are still updated in place — only janitor's region
-       changes — but nothing is committed.
+    5. Only changed managed files are written. A clean checkout of the
+       discovered default branch may commit those files atomically with a
+       ``Janitor-Run:`` trailer; dirty or non-default checkouts are never
+       committed.
 
     ``dry_run`` returns the merged previews without writing anything,
-    committing anything, or touching persistent state.
+    committing anything, fetching anything, or touching persistent state.
     """
     repo_dir = Path(repo_dir)
     guard = check_preflight_guards(repo_dir)
@@ -281,78 +359,185 @@ def sweep_repo(
         if is_wip_stale(repo_dir):
             checkpoint_abandoned_wip(repo_dir, state_mgr, run_id)
 
-    status = get_repo_status(repo_dir)
-    has_act, recent_log, recent_diff = has_24h_activity(repo_dir)
-    if not status["is_dirty"] and not has_act:
-        return {"repo": repo_dir.name, "status": "quiet", "tokens_spent": 0}
-
-    curr_hash = _sweep_input_hash(status["porcelain"], recent_log, recent_diff)
-    if state_mgr.get_last_input_hash(repo_dir.name) == curr_hash:
-        return {"repo": repo_dir.name, "status": "unchanged_hash", "tokens_spent": 0}
+    branch_report = collect_branch_report(
+        repo_dir, now=None, fetch=not (dry_run or no_fetch)
+    )
+    report_hash = _report_hash(branch_report)
+    if not branch_report.get("report_hash"):
+        branch_report = dict(branch_report)
+        branch_report["report_hash"] = report_hash
 
     context_file = repo_dir / "CONTEXT.md"
     todo_file = repo_dir / "TODO.md"
-    curr_context = (
-        context_file.read_text(encoding="utf-8") if context_file.exists() else ""
+    curr_context, curr_context_bytes = _read_document(context_file)
+    curr_todo, curr_todo_bytes = _read_document(todo_file)
+    existing_branch_block = extract_sentinel_block(
+        curr_context, BRANCH_SENTINEL_TAG
     )
-    curr_todo = todo_file.read_text(encoding="utf-8") if todo_file.exists() else ""
+    new_branch_block = render_branch_block(branch_report)
+    new_branch_inner = extract_sentinel_block(
+        new_branch_block, BRANCH_SENTINEL_TAG
+    )
+    branch_changed = existing_branch_block != new_branch_inner
 
-    prompt = SWEEP_PROMPT.format(
-        repo_name=repo_dir.name,
-        branch=status["branch"] or "(detached)",
-        current_sha=status["sha"] or "(no commits)",
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        git_status=_capped(status["porcelain"]) or "(Clean working tree)",
-        recent_log=_capped(recent_log) or "(No recent commits)",
-        recent_diff=_capped(recent_diff) or "(No commit diff available)",
-        curr_context=_capped(curr_context),
-        curr_todo=_capped(curr_todo),
-    )
-    prompt = _capped(prompt, MAX_TOTAL_PROMPT_CHARS)
-
-    data = extract_structured(
-        prompt,
-        system=SWEEP_SYSTEM,
-        schema_hint='{"recent_markdown": str, "todo_markdown": str}',
-    )
-    if not isinstance(data, dict) or "recent_markdown" not in data or "todo_markdown" not in data:
-        return {
-            "repo": repo_dir.name,
-            "status": "synthesis_failed",
-            "raw": str(data)[:500],
-        }
-
-    merged_context = merge_sentinel_block(
-        curr_context, CONTEXT_SENTINEL_TAG, data["recent_markdown"]
-    )
-    merged_todo = merge_sentinel_block(
-        curr_todo, TODO_SENTINEL_TAG, data["todo_markdown"]
+    status = get_repo_status(repo_dir)
+    has_act, recent_log, recent_diff = has_24h_activity(repo_dir)
+    curr_hash = _sweep_input_hash(status["porcelain"], recent_log, recent_diff)
+    normal_needed = (
+        (status["is_dirty"] or has_act)
+        and state_mgr.get_last_input_hash(repo_dir.name) != curr_hash
     )
 
-    if dry_run:
-        return {
-            "repo": repo_dir.name,
-            "status": "dry_run",
-            "context_md": merged_context,
-            "todo_md": merged_todo,
-        }
-
-    context_file.write_text(merged_context, encoding="utf-8")
-    todo_file.write_text(merged_todo, encoding="utf-8")
-
-    committed = False
-    if not status["is_dirty"] and status["branch"] in ("main", "master"):
-        committed = atomic_stage_and_commit(
-            repo_dir,
-            list(SWEEP_FILES),
-            f"docs(janitor): sweep CONTEXT.md and TODO.md for {status['sha']} [skip ci]",
-            run_id,
+    if not dry_run:
+        state_mgr.record_branch_observation(
+            repo_dir.name,
+            branch_report.get("branches", []),
+            report_hash,
+            _branch_observed_timestamp(branch_report),
         )
 
-    state_mgr.set_last_input_hash(repo_dir.name, curr_hash)
-    state_mgr.record_run(repo_dir.name, "committed" if committed else "written", run_id)
+    merged_context = curr_context
+    merged_todo = curr_todo
+    synthesis_failed = False
+    synthesis_raw = None
 
-    return {"repo": repo_dir.name, "status": "committed" if committed else "written"}
+    if normal_needed:
+        masked_context = remove_sentinel_block(curr_context, BRANCH_SENTINEL_TAG)
+        prompt = SWEEP_PROMPT.format(
+            repo_name=repo_dir.name,
+            branch=status["branch"] or "(detached)",
+            current_sha=status["sha"] or "(no commits)",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            git_status=_capped(status["porcelain"]) or "(Clean working tree)",
+            recent_log=_capped(recent_log) or "(No recent commits)",
+            recent_diff=_capped(recent_diff) or "(No commit diff available)",
+            curr_context=_capped(masked_context),
+            curr_todo=_capped(curr_todo),
+        )
+        prompt = _capped(prompt, MAX_TOTAL_PROMPT_CHARS)
+
+        try:
+            data = extract_structured(
+                prompt,
+                system=SWEEP_SYSTEM,
+                schema_hint='{"recent_markdown": str, "todo_markdown": str}',
+            )
+        except Exception as exc:
+            synthesis_failed = True
+            synthesis_raw = f"{type(exc).__name__}: {exc}"
+        else:
+            if (
+                not isinstance(data, dict)
+                or "recent_markdown" not in data
+                or "todo_markdown" not in data
+            ):
+                synthesis_failed = True
+                synthesis_raw = str(data)[:500]
+            else:
+                merged_context = merge_sentinel_block(
+                    curr_context, CONTEXT_SENTINEL_TAG, data["recent_markdown"]
+                )
+                merged_todo = merge_sentinel_block(
+                    curr_todo, TODO_SENTINEL_TAG, data["todo_markdown"]
+                )
+
+    if not normal_needed or synthesis_failed:
+        merged_context = curr_context
+        merged_todo = curr_todo
+
+    if branch_changed:
+        merged_context = merge_sentinel_block(
+            merged_context, BRANCH_SENTINEL_TAG, new_branch_inner
+        )
+
+    final_context_bytes = merged_context.encode("utf-8")
+    final_todo_bytes = merged_todo.encode("utf-8")
+    changed_files = []
+    if final_context_bytes != curr_context_bytes:
+        changed_files.append("CONTEXT.md")
+    if final_todo_bytes != curr_todo_bytes:
+        changed_files.append("TODO.md")
+
+    if dry_run:
+        if synthesis_failed:
+            result = {
+                "repo": repo_dir.name,
+                "status": "synthesis_failed",
+                "raw": synthesis_raw,
+            }
+            return _attach_branch_result(
+                result, branch_report, branch_changed, "unchanged"
+            )
+        if changed_files or normal_needed:
+            result = {
+                "repo": repo_dir.name,
+                "status": "dry_run",
+                "context_md": merged_context,
+                "todo_md": merged_todo,
+            }
+            return _attach_branch_result(
+                result,
+                branch_report,
+                branch_changed,
+                "dry_run" if branch_changed else "unchanged",
+            )
+        fast_status = "quiet" if not status["is_dirty"] and not has_act else "unchanged_hash"
+        result = {"repo": repo_dir.name, "status": fast_status, "tokens_spent": 0}
+        return _attach_branch_result(result, branch_report, branch_changed, "unchanged")
+
+    branch_status = "unchanged"
+    committed = False
+    if changed_files:
+        for filename, contents in (
+            ("CONTEXT.md", final_context_bytes),
+            ("TODO.md", final_todo_bytes),
+        ):
+            if filename in changed_files:
+                (repo_dir / filename).write_bytes(contents)
+
+        branch_only = branch_changed and (not normal_needed or synthesis_failed)
+        committed = _commit_sweep_documents(
+            repo_dir,
+            status,
+            branch_report,
+            changed_files,
+            branch_only,
+            run_id,
+        )
+        if "CONTEXT.md" in changed_files and branch_changed:
+            branch_status = "committed" if committed else "written"
+        elif branch_changed:
+            branch_status = "written"
+
+    if synthesis_failed:
+        if changed_files and branch_changed:
+            result = {
+                "repo": repo_dir.name,
+                "status": "synthesis_failed",
+                "raw": synthesis_raw,
+                "branch_status": branch_status,
+            }
+        else:
+            result = {
+                "repo": repo_dir.name,
+                "status": "synthesis_failed",
+                "raw": synthesis_raw,
+                "branch_status": "unchanged",
+            }
+        state_mgr.record_run(repo_dir.name, "synthesis_failed", run_id)
+        return _attach_branch_result(result, branch_report, branch_changed, branch_status)
+
+    if normal_needed:
+        state_mgr.set_last_input_hash(repo_dir.name, curr_hash)
+
+    status_name = "committed" if committed else ("written" if changed_files else None)
+    if status_name is None:
+        status_name = "quiet" if not status["is_dirty"] and not has_act else "unchanged_hash"
+    state_mgr.record_run(repo_dir.name, status_name, run_id)
+    result = {"repo": repo_dir.name, "status": status_name}
+    if status_name in {"quiet", "unchanged_hash"}:
+        result["tokens_spent"] = 0
+    return _attach_branch_result(result, branch_report, branch_changed, branch_status)
 
 
 def ensure_claude_symlink(repo_dir: Path) -> bool:

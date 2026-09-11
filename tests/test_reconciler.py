@@ -51,16 +51,34 @@ SWEEP_RESPONSE = {
 }
 
 
+def fixture_branch_report(changed):
+    return {
+        "repo": "repo",
+        "observed_at": "2026-09-11T00:00:00+00:00",
+        "fetch": {"status": "not_attempted", "remote": "origin"},
+        "report_stale": True,
+        "base": {
+            "branch": "main",
+            "local_branch": "main",
+            "ref": "refs/heads/main",
+            "sha": "base",
+        },
+        "branches": [],
+        "attention_flags": [],
+        "report_hash": "changed" if changed else "same",
+    }
+
+
 def _old_stamp(days: float = 2) -> str:
     """Git internal-format committer/author stamp ``days`` in the past."""
     ts = int(time.time()) - int(days * 86400)
     return f"@{ts} +0000"
 
 
-def _git_repo(tmp: Path, name: str = "repo") -> Path:
+def _git_repo(tmp: Path, name: str = "repo", branch: str = "main") -> Path:
     repo = tmp / name
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     return repo
@@ -217,16 +235,29 @@ class TestSweepRepo(unittest.TestCase):
         self.assertFalse((repo / "CONTEXT.md").exists())
 
     @patch("janitor.reconciler.extract_structured")
-    def test_clean_quiet_repo_is_zero_token(self, mock_extract):
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_clean_quiet_repo_is_zero_token(self, collect, render, mock_extract):
         repo = _git_repo(self.tmp)
-        _commit(repo, "initial", stamp=_old_stamp())
+        existing = "<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->\n"
+        _commit(
+            repo,
+            "initial",
+            files={"README.md": "hi\n", "CONTEXT.md": existing},
+            stamp=_old_stamp(),
+        )
+        collect.return_value = fixture_branch_report(changed=False)
 
-        result = sweep_repo(repo, self.sm, "run_quiet")
+        result = sweep_repo(repo, self.sm, "run_quiet", no_fetch=True)
 
         self.assertEqual(result["status"], "quiet")
         self.assertEqual(result["tokens_spent"], 0)
         mock_extract.assert_not_called()
-        self.assertFalse((repo / "CONTEXT.md").exists())
+        self.assertEqual((repo / "CONTEXT.md").read_text(), existing)
         self.assertIsNone(self.sm.get_last_input_hash("repo"))
 
     @patch("janitor.reconciler.extract_structured")
@@ -331,6 +362,294 @@ class TestSweepRepo(unittest.TestCase):
         self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "1")
         self.assertIsNone(self.sm.get_last_input_hash("repo"))
         self.assertEqual(mock_extract.call_count, 1)
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_quiet_normal_repo_still_writes_changed_branch_block_without_model(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp())
+        collect.return_value = fixture_branch_report(changed=True)
+
+        result = sweep_repo(repo, self.sm, "run_branch", no_fetch=True)
+
+        self.assertIn(result["status"], {"written", "committed"})
+        extract.assert_not_called()
+        collect.assert_called_once_with(repo, now=None, fetch=False)
+        self.assertIn("<!-- janitor:begin:branches -->", (repo / "CONTEXT.md").read_text())
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_unchanged_branch_block_and_normal_hash_do_not_write_or_call_model(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        existing = "<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->\n"
+        _commit(repo, "initial", files={"README.md": "hi\n", "CONTEXT.md": existing}, stamp=_old_stamp())
+        collect.return_value = fixture_branch_report(changed=False)
+
+        before = (repo / "CONTEXT.md").read_bytes()
+        result = sweep_repo(repo, self.sm, "run_noop", no_fetch=True)
+
+        self.assertEqual(result["status"], "quiet")
+        self.assertEqual((repo / "CONTEXT.md").read_bytes(), before)
+        extract.assert_not_called()
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_existing_branch_block_is_masked_from_normal_sweep_prompt(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        existing = (
+            "human\n<!-- janitor:begin:branches -->\nsecret branch table\n"
+            "<!-- janitor:end:branches -->\n"
+        )
+        _commit(repo, "initial", files={"README.md": "hi\n", "CONTEXT.md": existing}, stamp=_old_stamp())
+        (repo / "dirty.txt").write_text("work\n")
+        collect.return_value = fixture_branch_report(changed=False)
+        extract.return_value = dict(SWEEP_RESPONSE)
+
+        sweep_repo(repo, self.sm, "run_mask", no_fetch=True)
+
+        prompt = extract.call_args.args[0]
+        self.assertNotIn("secret branch table", prompt)
+        self.assertIn("human", prompt)
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_branch_only_commit_uses_dynamic_default_and_context_only(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp, branch="trunk")
+        _commit(repo, "initial", stamp=_old_stamp())
+        report = fixture_branch_report(changed=True)
+        report["base"].update(
+            {
+                "branch": "trunk",
+                "local_branch": "trunk",
+                "ref": "refs/remotes/origin/trunk",
+            }
+        )
+        collect.return_value = report
+
+        result = sweep_repo(repo, self.sm, "run_trunk", no_fetch=True)
+
+        self.assertEqual(result["status"], "committed")
+        self.assertEqual(_git(repo, "show", "--name-only", "--format=", "HEAD").split(), ["CONTEXT.md"])
+        self.assertIn(
+            "docs(janitor): update branch and worktree inventory for",
+            _git(repo, "log", "-1", "--format=%B"),
+        )
+        extract.assert_not_called()
+
+    @patch("janitor.reconciler.extract_structured", side_effect=RuntimeError("gateway down"))
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_branch_report_is_persisted_when_normal_synthesis_fails(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial")
+        collect.return_value = fixture_branch_report(changed=True)
+
+        result = sweep_repo(repo, self.sm, "run_model_failure", no_fetch=True)
+
+        self.assertEqual(result["status"], "synthesis_failed")
+        self.assertEqual(result["branch_status"], "committed")
+        self.assertIn("new", (repo / "CONTEXT.md").read_text())
+        self.assertFalse((repo / "TODO.md").exists())
+        self.assertIn(
+            "docs(janitor): update branch and worktree inventory for",
+            _git(repo, "log", "-1", "--format=%B"),
+        )
+        self.assertEqual(self.sm.get_last_run("repo")["status"], "synthesis_failed")
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_branch_and_normal_updates_share_commit_and_stage_only_changed_files(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial")
+        collect.return_value = fixture_branch_report(changed=True)
+        extract.return_value = dict(SWEEP_RESPONSE)
+
+        result = sweep_repo(repo, self.sm, "run_shared", no_fetch=True)
+
+        self.assertEqual(result["status"], "committed")
+        names = _git(repo, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertEqual(sorted(names), ["CONTEXT.md", "TODO.md"])
+        self.assertIn("docs(janitor): sweep CONTEXT.md and TODO.md", _git(repo, "log", "-1", "--format=%B"))
+        self.assertIn("new", (repo / "CONTEXT.md").read_text())
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_dirty_checkout_writes_branch_block_without_committing(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp())
+        (repo / "dirty.txt").write_text("human work\n")
+        collect.return_value = fixture_branch_report(changed=True)
+        extract.return_value = dict(SWEEP_RESPONSE)
+
+        result = sweep_repo(repo, self.sm, "run_dirty", no_fetch=True)
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(result["branch_status"], "written")
+        self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "1")
+        self.assertIn("new", (repo / "CONTEXT.md").read_text())
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_non_default_checkout_writes_branch_block_without_committing(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp, branch="feature")
+        _commit(repo, "initial", stamp=_old_stamp())
+        report = fixture_branch_report(changed=True)
+        report["base"]["local_branch"] = "main"
+        collect.return_value = report
+
+        result = sweep_repo(repo, self.sm, "run_feature", no_fetch=True)
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(result["branch_status"], "written")
+        self.assertEqual(_git(repo, "rev-list", "--count", "HEAD").strip(), "1")
+        extract.assert_not_called()
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_dry_run_disables_fetch_and_leaves_files_and_state_untouched(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp())
+        collect.return_value = fixture_branch_report(changed=True)
+
+        result = sweep_repo(repo, self.sm, "run_dry_branch", dry_run=True)
+
+        self.assertEqual(result["status"], "dry_run")
+        collect.assert_called_once_with(repo, now=None, fetch=False)
+        extract.assert_not_called()
+        self.assertFalse((repo / "CONTEXT.md").exists())
+        self.assertFalse((repo / "TODO.md").exists())
+        self.assertIsNone(self.sm.get_branch_review("repo"))
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch("janitor.reconciler.render_branch_block", create=True)
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_preflight_guard_does_not_collect_or_touch_branch_state(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp())
+        (repo / ".git" / "index.lock").write_text("")
+
+        result = sweep_repo(repo, self.sm, "run_locked_branch", no_fetch=True)
+
+        self.assertEqual(result["status"], "skipped")
+        collect.assert_not_called()
+        render.assert_not_called()
+        extract.assert_not_called()
+        self.assertIsNone(self.sm.get_branch_review("repo"))
+
+    @patch("janitor.reconciler.atomic_stage_and_commit")
+    @patch("janitor.reconciler.extract_structured")
+    @patch(
+        "janitor.reconciler.render_branch_block",
+        create=True,
+        return_value="<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->",
+    )
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_byte_exact_branch_noop_does_not_write_or_stage(
+        self, collect, render, extract, commit
+    ):
+        repo = _git_repo(self.tmp)
+        existing = "<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->\n"
+        _commit(repo, "initial", files={"README.md": "hi\n", "CONTEXT.md": existing}, stamp=_old_stamp())
+        collect.return_value = fixture_branch_report(changed=False)
+        before = (repo / "CONTEXT.md").read_bytes()
+
+        result = sweep_repo(repo, self.sm, "run_exact_noop", no_fetch=True)
+
+        self.assertEqual(result["status"], "quiet")
+        self.assertEqual((repo / "CONTEXT.md").read_bytes(), before)
+        commit.assert_not_called()
+        extract.assert_not_called()
+
+    @patch("janitor.reconciler.extract_structured")
+    @patch("janitor.reconciler.render_branch_block", create=True)
+    @patch("janitor.reconciler.collect_branch_report", create=True)
+    def test_normal_hash_gate_is_independent_of_changed_branch_output(
+        self, collect, render, extract
+    ):
+        repo = _git_repo(self.tmp)
+        _commit(repo, "initial", stamp=_old_stamp())
+        (repo / "dirty.txt").write_text("human work\n")
+        collect.side_effect = [
+            fixture_branch_report(changed=False),
+            fixture_branch_report(changed=True),
+        ]
+        render.side_effect = [
+            "<!-- janitor:begin:branches -->\nold\n<!-- janitor:end:branches -->",
+            "<!-- janitor:begin:branches -->\nnew\n<!-- janitor:end:branches -->",
+        ]
+        extract.return_value = dict(SWEEP_RESPONSE)
+
+        first = sweep_repo(repo, self.sm, "run_hash_1", no_fetch=True)
+        second = sweep_repo(repo, self.sm, "run_hash_2", no_fetch=True)
+
+        self.assertEqual(first["status"], "written")
+        self.assertEqual(second["status"], "written")
+        self.assertEqual(extract.call_count, 1)
+        self.assertIn("new", (repo / "CONTEXT.md").read_text())
 
 
 class TestOverviewRepo(unittest.TestCase):

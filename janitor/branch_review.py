@@ -833,6 +833,13 @@ def branch_report_hash(report: dict) -> str:
         if isinstance(value, dict):
             result = {}
             for key, item in value.items():
+                if key in {"documents", "documents_status"}:
+                    # Document bodies and their expected not-found statuses
+                    # are evidence for the handoff, but they do not affect the
+                    # deterministic branch block. Exclude them from
+                    # continuity hashing so Janitor's own Context commit
+                    # cannot retrigger the branch report.
+                    continue
                 if key in {
                     "review_sha",
                     "review_committer_timestamp",

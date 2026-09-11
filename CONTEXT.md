@@ -16,3 +16,14 @@ Active focus is local integration and documentation of Janitor's branch and link
 
 The local merge has not been pushed or deployed. An unstaged `tests/test_git_ops.py` edit that existed before the merge was preserved in the working tree. Homelab timer and service configuration remains documented under `systemd/`.
 <!-- janitor:end:recent -->
+
+<!-- janitor:begin:branches -->
+## Branch and Worktree Review
+Base: refs/remotes/origin/main @ 462ba795c02e51203eb8231aecaccd82d1f95f3a
+Freshness: current
+
+| Branch | Class | Sources | Merged | Ahead/behind | Worktree | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| main | active | local, origin/main | no | +16/-0 | dirty | subject: docs: refresh Janitor branch review documentation; paths: CONTEXT.md, LLM-OVERVIEW.md, README.md, TODO.md, docs/superpowers/plans/2026-09-11-janitor-branch-worktree-review.md |
+| claude/janitor-reboot-h7bqey | active | origin/claude/janitor-reboot-h7bqey | yes | +0/-28 | unattached | subject: Fix CLAUDE.md symlink creation blocking first-sweep auto-commit; document mirror name collision |
+<!-- janitor:end:branches -->

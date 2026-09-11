@@ -191,6 +191,28 @@ class TestBranchCollector(BranchReviewFixture):
         self.assertTrue(any(item["status"] == "missing" for item in row["worktrees"]))
         self.assertIn("missing_worktree", row["attention_flags"])
 
+    def test_report_keeps_sorted_detached_and_missing_worktrees(self):
+        report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
+
+        worktrees = report["worktrees"]
+        self.assertEqual(
+            [item["path"] for item in worktrees],
+            sorted(item["path"] for item in worktrees),
+        )
+        self.assertTrue(any(item.get("branch") is None for item in worktrees))
+        self.assertTrue(any(item.get("status") == "missing" for item in worktrees))
+
+    def test_hierarchical_cached_remote_default_keeps_full_branch_suffix(self):
+        default_ref = "refs/remotes/origin/release/stable"
+        self._git("update-ref", default_ref, self._rev("main"))
+        self._git("symbolic-ref", "refs/remotes/origin/HEAD", default_ref)
+
+        report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
+
+        self.assertEqual(report["base"]["branch"], "release/stable")
+        self.assertEqual(report["base"]["local_branch"], "release/stable")
+        self.assertEqual(report["base"]["ref"], default_ref)
+
     def test_report_contract_contains_required_fields_and_repository_evidence(self):
         report = collect_branch_report(self.repo, now=FIXED_NOW, fetch=False)
         self.assertEqual(
@@ -201,6 +223,7 @@ class TestBranchCollector(BranchReviewFixture):
                 "report_stale",
                 "base",
                 "branches",
+                "worktrees",
                 "attention_flags",
                 "report_hash",
             },
@@ -317,6 +340,53 @@ class TestFetch(unittest.TestCase):
         self.assertEqual(result["remote"], "origin")
         self.assertFalse(any(cmd[1:2] == ["fetch"] for cmd in calls))
 
+    def test_without_origin_prefers_sorted_remote_with_cached_symbolic_default(self):
+        def run(repo_dir, args, **kwargs):
+            if args == ["git", "remote"]:
+                return self._run_result(stdout="zeta\nalpha\n")
+            if args == [
+                "git",
+                "symbolic-ref",
+                "-q",
+                "refs/remotes/alpha/HEAD",
+            ]:
+                return self._run_result(
+                    stdout="refs/remotes/alpha/release/stable\n"
+                )
+            if args == [
+                "git",
+                "symbolic-ref",
+                "-q",
+                "refs/remotes/zeta/HEAD",
+            ]:
+                return self._run_result(stdout="refs/remotes/zeta/main\n")
+            if args[:3] == ["git", "rev-parse", "--verify"]:
+                if "alpha/release/stable" in args[3]:
+                    return self._run_result(returncode=1)
+                return self._run_result(stdout="a" * 40 + "\n")
+            return self._run_result()
+
+        with mock.patch.object(branch_review, "_run_git", side_effect=run):
+            result = branch_review._fetch_primary_remote(Path("/repo"), enabled=False)
+
+        self.assertEqual(result["remote"], "zeta")
+        self.assertEqual(result["status"], "not_attempted")
+
+    def test_without_cached_symbolic_defaults_falls_back_deterministically(self):
+        def run(repo_dir, args, **kwargs):
+            if args == ["git", "remote"]:
+                return self._run_result(stdout="zeta\nalpha\n")
+            if args[:4] == ["git", "symbolic-ref", "-q", "refs/remotes/alpha/HEAD"]:
+                return self._run_result(returncode=1)
+            if args[:4] == ["git", "symbolic-ref", "-q", "refs/remotes/zeta/HEAD"]:
+                return self._run_result(returncode=1)
+            return self._run_result()
+
+        with mock.patch.object(branch_review, "_run_git", side_effect=run):
+            result = branch_review._fetch_primary_remote(Path("/repo"), enabled=False)
+
+        self.assertEqual(result["remote"], "alpha")
+
 
 class TestBranchRenderer(unittest.TestCase):
     def _report(self, rows, **overrides):
@@ -404,6 +474,33 @@ class TestBranchRenderer(unittest.TestCase):
         self.assertNotIn("\n", text.split("| feature |")[1].split("\n", 1)[0])
         self.assertLessEqual(len(text), MAX_DOC_EVIDENCE_CHARS * 2)
 
+    def test_repository_evidence_cannot_create_sentinel_delimiters(self):
+        end_marker = "<!-- janitor:end:branches -->"
+        other_marker = "<!-- janitor:begin:other -->"
+        row = self._row(
+            f"feature-{end_marker}",
+            subject=f"subject {end_marker}",
+            path=f"path/{other_marker}",
+        )
+        row["focus"] = f"subject: {end_marker}; paths: {other_marker}"
+        row["remote_refs"] = [{"name": f"origin/{end_marker}"}]
+        report = self._report(
+            [row],
+            base={
+                "status": "ok",
+                "ref": f"refs/remotes/origin/{end_marker}",
+                "sha": other_marker,
+            },
+        )
+
+        rendered = render_branch_block(report)
+        body = rendered.split("<!-- janitor:begin:branches -->\n", 1)[1]
+        body = body.rsplit("\n<!-- janitor:end:branches -->", 1)[0]
+        self.assertNotIn(end_marker, body)
+        self.assertNotIn(other_marker, body)
+        self.assertIn(end_marker, row["focus"])
+        self.assertIn(end_marker, report["base"]["ref"])
+
     def test_no_branches_and_base_unavailable(self):
         text = render_branch_block(
             self._report(
@@ -443,6 +540,30 @@ class TestBranchRenderer(unittest.TestCase):
             render_branch_block(json.loads(json.dumps(report))),
         )
 
+    def test_renderer_shows_detached_worktrees_and_sanitizes_their_paths(self):
+        marker = "<!-- janitor:end:branches -->"
+        report = self._report(
+            [self._row("main")],
+            worktrees=[
+                {
+                    "path": f"/tmp/detached-{marker}",
+                    "head": "b" * 40,
+                    "branch": None,
+                    "status": "missing",
+                }
+            ],
+        )
+
+        rendered = render_branch_block(report)
+
+        self.assertIn("Detached worktrees:", rendered)
+        self.assertIn("detached-", rendered)
+        self.assertEqual(rendered.count("<!-- janitor:begin:branches -->"), 1)
+        self.assertEqual(rendered.count("<!-- janitor:end:branches -->"), 1)
+        detached_body = rendered.split("Detached worktrees:\n", 1)[1]
+        detached_body = detached_body.rsplit("\n<!-- janitor:end:branches -->", 1)[0]
+        self.assertNotIn(marker, detached_body)
+
     def test_hash_ignores_observation_timestamp(self):
         first = self._report(
             [self._row("main")], observed_at="2026-09-11T12:00:00+00:00"
@@ -450,6 +571,37 @@ class TestBranchRenderer(unittest.TestCase):
         second = json.loads(json.dumps(first))
         second["observed_at"] = "2026-09-12T12:00:00+00:00"
         self.assertEqual(branch_report_hash(first), branch_report_hash(second))
+
+    def test_hash_ignores_fetch_diagnostics_but_keeps_semantic_outcomes(self):
+        first = self._report(
+            [self._row("main")],
+            fetch={
+                "status": "fetch_failed",
+                "remote": "origin",
+                "attempted": True,
+                "timed_out": False,
+                "reason": "stderr from attempt one",
+                "stderr": "raw diagnostic one",
+            },
+        )
+        second = json.loads(json.dumps(first))
+        second["fetch"]["reason"] = "stderr from attempt two"
+        second["fetch"]["stderr"] = "raw diagnostic two"
+        self.assertEqual(branch_report_hash(first), branch_report_hash(second))
+
+        for field, value in (
+            ("status", "fetched"),
+            ("remote", "upstream"),
+            ("attempted", False),
+            ("timed_out", True),
+        ):
+            changed = json.loads(json.dumps(first))
+            changed["fetch"][field] = value
+            self.assertNotEqual(
+                branch_report_hash(first),
+                branch_report_hash(changed),
+                field,
+            )
 
 
 if __name__ == "__main__":

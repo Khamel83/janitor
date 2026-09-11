@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +23,10 @@ AGING_DAYS = 30
 BRANCH_SENTINEL_TAG = "branches"
 
 _FETCH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=5"
+_SENTINEL_LIKE_COMMENT = re.compile(
+    r"<!--\s*janitor\s*:\s*(?:begin|end)\s*:\s*[^>]*-->",
+    re.IGNORECASE | re.DOTALL,
+)
 _CLASSIFICATION_RANK = {
     "abandoned_auto_wip": 0,
     "active": 1,
@@ -84,11 +89,19 @@ def _fetch_primary_remote(repo_dir: Path, *, enabled: bool) -> dict:
     remote_names = sorted(
         {line.strip() for line in remotes.stdout.splitlines() if line.strip()}
     )
-    primary = (
-        "origin"
-        if "origin" in remote_names
-        else (remote_names[0] if remote_names else None)
-    )
+    if "origin" in remote_names:
+        primary = "origin"
+    else:
+        cached_default_remotes = [
+            remote
+            for remote in remote_names
+            if _cached_remote_default_ref(repo_dir, remote) is not None
+        ]
+        primary = (
+            cached_default_remotes[0]
+            if cached_default_remotes
+            else (remote_names[0] if remote_names else None)
+        )
 
     if primary is None:
         return {
@@ -147,19 +160,36 @@ def _resolve_ref(repo_dir: Path, ref: str) -> str | None:
     return sha[0] if sha else None
 
 
+def _cached_remote_default_ref(repo_dir: Path, remote: str) -> str | None:
+    """Return a usable cached symbolic default ref for ``remote``."""
+    result = _run_git(
+        repo_dir,
+        ["git", "symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD"],
+    )
+    if result.returncode != 0:
+        return None
+    symbolic_ref = result.stdout.strip().splitlines()
+    if not symbolic_ref:
+        return None
+    symbolic_ref = symbolic_ref[0]
+    if not symbolic_ref.startswith("refs/"):
+        symbolic_ref = f"refs/remotes/{symbolic_ref}"
+    prefix = f"refs/remotes/{remote}/"
+    if not symbolic_ref.startswith(prefix):
+        return None
+    branch = symbolic_ref[len(prefix) :]
+    if not branch or branch == "HEAD":
+        return None
+    return symbolic_ref if _resolve_ref(repo_dir, symbolic_ref) else None
+
+
 def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
     candidates: list[tuple[str, str]] = []
     if primary_remote:
-        symbolic = _run_git(
-            repo_dir,
-            ["git", "symbolic-ref", "-q", f"refs/remotes/{primary_remote}/HEAD"],
-        )
-        symbolic_ref = symbolic.stdout.strip()
-        if symbolic.returncode == 0 and symbolic_ref:
-            if not symbolic_ref.startswith("refs/"):
-                symbolic_ref = f"refs/remotes/{symbolic_ref}"
-            if symbolic_ref.startswith(f"refs/remotes/{primary_remote}/"):
-                candidates.append((symbolic_ref.rsplit("/", 1)[-1], symbolic_ref))
+        symbolic_ref = _cached_remote_default_ref(repo_dir, primary_remote)
+        if symbolic_ref:
+            prefix = f"refs/remotes/{primary_remote}/"
+            candidates.append((symbolic_ref[len(prefix) :], symbolic_ref))
         candidates.extend(
             (
                 branch,
@@ -176,7 +206,13 @@ def _discover_base(repo_dir: Path, primary_remote: str | None) -> dict:
         seen.add(ref)
         sha = _resolve_ref(repo_dir, ref)
         if sha:
-            return {"status": "ok", "branch": branch, "ref": ref, "sha": sha}
+            return {
+                "status": "ok",
+                "branch": branch,
+                "local_branch": branch,
+                "ref": ref,
+                "sha": sha,
+            }
     return {
         "status": "base_unavailable",
         "branch": None,
@@ -266,6 +302,15 @@ def _worktree_blocks(output: str) -> list[dict[str, str]]:
     return blocks
 
 
+def _worktree_sort_key(worktree: dict) -> tuple[str, str, str, str]:
+    return (
+        str(worktree.get("path") or ""),
+        str(worktree.get("branch") or ""),
+        str(worktree.get("head") or ""),
+        str(worktree.get("status") or ""),
+    )
+
+
 def _collect_worktrees(repo_dir: Path) -> list[dict]:
     result = _run_git(repo_dir, ["git", "worktree", "list", "--porcelain"])
     if result.returncode != 0:
@@ -280,6 +325,7 @@ def _collect_worktrees(repo_dir: Path) -> list[dict]:
             "path": str(path),
             "head": block.get("HEAD"),
             "branch": block.get("branch"),
+            "detached": block.get("branch") is None,
         }
         if not path.is_dir():
             row["status"] = "missing"
@@ -295,7 +341,7 @@ def _collect_worktrees(repo_dir: Path) -> list[dict]:
         else:
             row["status"] = "dirty" if status.stdout else "clean"
         worktrees.append(row)
-    return worktrees
+    return sorted(worktrees, key=_worktree_sort_key)
 
 
 def _unknown_comparison(status: str = "unknown") -> dict:
@@ -463,7 +509,7 @@ def collect_branch_report(
     primary_remote = fetch_result.get("remote")
     base = _discover_base(repo_dir, primary_remote)
     raw_refs = _collect_refs(repo_dir)
-    worktrees = _collect_worktrees(repo_dir)
+    worktrees = sorted(_collect_worktrees(repo_dir), key=_worktree_sort_key)
 
     grouped: dict[str, list[dict]] = {}
     for ref in raw_refs:
@@ -488,11 +534,14 @@ def collect_branch_report(
         if tip is None:
             continue
 
-        attached = [
-            dict(item)
-            for item in worktrees
-            if item.get("branch") == (local_ref or tip).get("ref")
-        ]
+        attached = sorted(
+            (
+                dict(item)
+                for item in worktrees
+                if item.get("branch") == (local_ref or tip).get("ref")
+            ),
+            key=_worktree_sort_key,
+        )
         tip = dict(tip)
         tip["recent_subjects"] = _recent_subjects(repo_dir, tip["ref"])
         documents = _document_evidence(repo_dir, tip["ref"])
@@ -539,6 +588,7 @@ def collect_branch_report(
         "report_stale": report_stale,
         "base": base,
         "branches": rows,
+        "worktrees": worktrees,
         "attention_flags": attention_flags,
         "report_hash": "",
     }
@@ -552,6 +602,14 @@ def branch_report_hash(report: dict) -> str:
         for key, value in report.items()
         if key not in {"observed_at", "report_hash"}
     }
+    fetch = canonical.get("fetch")
+    if isinstance(fetch, dict):
+        canonical["fetch"] = {
+            "status": fetch.get("status"),
+            "remote": fetch.get("remote"),
+            "attempted": bool(fetch.get("attempted", False)),
+            "timed_out": bool(fetch.get("timed_out", False)),
+        }
     payload = json.dumps(
         canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -561,6 +619,9 @@ def branch_report_hash(report: dict) -> str:
 def _markdown_cell(value: Any) -> str:
     text = str(value).replace("\r\n", "\n").replace("\r", "\n")
     text = text[:MAX_DOC_EVIDENCE_CHARS]
+    text = _SENTINEL_LIKE_COMMENT.sub(
+        lambda match: "&lt;!--" + match.group(0)[4:], text
+    )
     return text.replace("|", "\\|").replace("\n", "<br>")
 
 
@@ -597,12 +658,17 @@ def _comparison_summary(row: dict) -> tuple[str, str]:
 def render_branch_block(report: dict) -> str:
     base = report.get("base") or {}
     if base.get("status") == "ok" and base.get("ref") and base.get("sha"):
-        base_text = f"{base['ref']} @ {base['sha']}"
+        base_text = (
+            f"{_markdown_cell(base['ref'])} @ {_markdown_cell(base['sha'])}"
+        )
     else:
-        base_text = f"unavailable ({base.get('status', 'base_unavailable')})"
+        base_text = (
+            "unavailable ("
+            f"{_markdown_cell(base.get('status', 'base_unavailable'))})"
+        )
     fetch = report.get("fetch") or {}
     if report.get("report_stale"):
-        reason = fetch.get("status", "stale")
+        reason = _markdown_cell(fetch.get("status", "stale"))
         base_text_freshness = f"stale ({reason})"
     else:
         base_text_freshness = "current"
@@ -634,5 +700,21 @@ def render_branch_block(report: dict) -> str:
             )
             + " |"
         )
+    detached_worktrees = sorted(
+        (
+            item
+            for item in report.get("worktrees", [])
+            if item.get("branch") is None
+        ),
+        key=_worktree_sort_key,
+    )
+    if detached_worktrees:
+        lines.extend(["", "Detached worktrees:"])
+        for worktree in detached_worktrees:
+            path = _markdown_cell(worktree.get("path", "unknown"))
+            status = _markdown_cell(worktree.get("status", "unknown"))
+            head = worktree.get("head")
+            head_text = f" @ {_markdown_cell(head)}" if head else ""
+            lines.append(f"- {path} ({status}{head_text})")
     lines.append("<!-- janitor:end:branches -->")
     return "\n".join(lines)

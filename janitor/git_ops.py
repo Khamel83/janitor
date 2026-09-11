@@ -145,6 +145,7 @@ def has_24h_activity(repo_dir: Path) -> Tuple[bool, str, str]:
         [
             "git",
             "log",
+            "--since=24.hours",
             "-n",
             "1",
             "--invert-grep",

@@ -213,7 +213,7 @@ class SweepCommandTests(CliTestCase):
 
 class BranchesCommandTests(CliTestCase):
     def test_branches_json_uses_collector_and_no_fetch(self):
-        repo = self.fake_repo("demo")
+        repo = self.git_repo("demo")
         expected = {
             "repo": "demo",
             "status": "ok",
@@ -240,7 +240,7 @@ class BranchesCommandTests(CliTestCase):
         render.assert_called_once_with(expected["branch_review"])
 
     def test_sweep_no_fetch_is_forwarded(self):
-        repo = self.fake_repo("demo")
+        repo = self.git_repo("demo")
         with patch(
             "janitor.cli.sweep_repo",
             return_value={"repo": "demo", "status": "quiet"},
@@ -250,7 +250,7 @@ class BranchesCommandTests(CliTestCase):
         self.assertEqual(sweep.call_args.kwargs["no_fetch"], True)
 
     def test_branches_human_output_contains_all_rows(self):
-        repo = self.fake_repo("demo")
+        repo = self.git_repo("demo")
         report = {"branches": [{"name": "main"}], "report_stale": False}
         with patch(
             "janitor.cli.collect_branch_report", return_value=report
@@ -262,7 +262,7 @@ class BranchesCommandTests(CliTestCase):
         self.assertIn("| main |", out)
 
     def test_branches_does_not_construct_state_or_run_sweep_paths(self):
-        repo = self.fake_repo("demo")
+        repo = self.git_repo("demo")
         report = {"branches": [], "report_stale": False}
         with patch("janitor.cli._state_manager") as state_manager, patch(
             "janitor.cli._run_tidy"
@@ -291,6 +291,45 @@ class BranchesCommandTests(CliTestCase):
                 "reason": "not_a_git_repo",
             },
         )
+        collect.assert_not_called()
+
+    def test_branches_reuses_preflight_and_does_not_fetch_guarded_targets(self):
+        locked = self.git_repo("locked")
+        (locked / ".git" / "index.lock").write_text("")
+
+        operation = self.git_repo("operation")
+        (operation / ".git" / "MERGE_HEAD").write_text("0" * 40 + "\n")
+
+        detached = self.git_repo("detached")
+        subprocess.run(
+            ["git", "checkout", "--detach", "HEAD"],
+            cwd=detached,
+            check=True,
+            capture_output=True,
+        )
+
+        malformed = self.root / "malformed"
+        malformed.mkdir()
+        (malformed / ".git").write_text("gitdir: /does/not/exist\n")
+
+        cases = (
+            (locked, "git_index_locked"),
+            (operation, "merge_in_progress"),
+            (detached, "detached_head"),
+            (malformed, "not_a_git_repo"),
+        )
+        with patch("janitor.cli.collect_branch_report") as collect, patch(
+            "janitor.cli.render_branch_block", return_value="BRANCHES"
+        ):
+            for repo, reason in cases:
+                code, out = self.run_cli(
+                    ["branches", "--json", "--no-fetch", str(repo)]
+                )
+                self.assertEqual(code, 0)
+                result = json.loads(out)["results"][0]
+                self.assertEqual(result["status"], "skipped")
+                self.assertEqual(result["reason"], reason)
+
         collect.assert_not_called()
 
 

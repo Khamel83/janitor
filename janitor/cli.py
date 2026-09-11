@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Optional
 
 from janitor.branch_review import collect_branch_report, render_branch_block
-from janitor.git_ops import get_repo_status
+from janitor.git_ops import check_preflight_guards, get_repo_status
 from janitor.hygiene import (
     checkpoint_abandoned_wip,
     is_wip_stale,
@@ -147,8 +147,9 @@ def _run_status(repo: Path, state_mgr: StateManager) -> dict:
 
 def _run_branches(repo: Path, no_fetch: bool) -> dict:
     """Collect and render a report-only branch review for ``repo``."""
-    if not (repo / ".git").exists():
-        return {"repo": repo.name, "status": "skipped", "reason": "not_a_git_repo"}
+    guard = check_preflight_guards(repo)
+    if guard:
+        return {"repo": repo.name, "status": "skipped", "reason": guard}
     branch_review = collect_branch_report(repo, fetch=not no_fetch)
     return {
         "repo": repo.name,

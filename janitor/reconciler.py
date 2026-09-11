@@ -178,6 +178,15 @@ def _capped(text: str, limit: int = MAX_PROMPT_FIELD_CHARS) -> str:
     return text[:limit] + f"\n... [truncated, {len(text) - limit} more chars]"
 
 
+def _sentinel_pattern(tag: str) -> re.Pattern:
+    """Return the escaped complete-block matcher for ``tag``."""
+    begin_marker = f"<!-- janitor:begin:{tag} -->"
+    end_marker = f"<!-- janitor:end:{tag} -->"
+    return re.compile(
+        rf"{re.escape(begin_marker)}(.*?){re.escape(end_marker)}", re.DOTALL
+    )
+
+
 def merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str:
     """Merge ``new_content`` into ``existing_text`` inside a tagged sentinel block.
 
@@ -192,10 +201,7 @@ def merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str:
     """
     begin_marker = f"<!-- janitor:begin:{tag} -->"
     end_marker = f"<!-- janitor:end:{tag} -->"
-
-    pattern = re.compile(
-        rf"{re.escape(begin_marker)}.*?{re.escape(end_marker)}", re.DOTALL
-    )
+    pattern = _sentinel_pattern(tag)
     replacement = f"{begin_marker}\n{new_content.strip()}\n{end_marker}"
 
     if pattern.search(existing_text):
@@ -203,6 +209,21 @@ def merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str:
 
     sep = "\n\n" if existing_text.strip() else ""
     return f"{existing_text.rstrip()}{sep}{replacement}\n"
+
+
+def extract_sentinel_block(existing_text: str, tag: str) -> str:
+    """Return the inner content of the first complete tagged sentinel block."""
+    match = _sentinel_pattern(tag).search(existing_text)
+    return match.group(1).strip() if match else ""
+
+
+def remove_sentinel_block(existing_text: str, tag: str) -> str:
+    """Remove complete tagged sentinel blocks, leaving malformed text untouched."""
+    pattern = _sentinel_pattern(tag)
+    if not pattern.search(existing_text):
+        return existing_text
+    removal_pattern = re.compile(pattern.pattern + r"\r?\n?", pattern.flags)
+    return removal_pattern.sub("", existing_text)
 
 
 def _sweep_input_hash(

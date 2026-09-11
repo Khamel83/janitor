@@ -107,6 +107,101 @@ class TestStateManager(unittest.TestCase):
             [],
         )
 
+    def test_branch_observation_records_compact_continuity(self):
+        observed_at = 1_800_000_000
+        rows = [
+            {
+                "name": "main",
+                "tip": {"sha": "sha-main"},
+                "classification": "active",
+            }
+        ]
+
+        self.sm.record_branch_observation("maya", rows, "report-1", observed_at)
+
+        self.assertEqual(
+            self.sm.get_branch_review("maya"),
+            {
+                "last_report_hash": "report-1",
+                "last_semantic_change_date": "2027-01-15",
+                "branches": {
+                    "main": {
+                        "first_seen": observed_at,
+                        "last_seen": observed_at,
+                        "last_sha": "sha-main",
+                        "classification": "active",
+                        "present": True,
+                        "missing_since": None,
+                    }
+                },
+            },
+        )
+
+    def test_branch_observation_preserves_first_seen_and_updates_current_fields(self):
+        first_seen = 1_800_000_000
+        self.sm.record_branch_observation(
+            "maya",
+            [{"name": "feature", "tip": {"sha": "sha-1"}, "classification": "aging"}],
+            "report-1",
+            first_seen,
+        )
+
+        last_seen = first_seen + 86400
+        self.sm.record_branch_observation(
+            "maya",
+            [{"name": "feature", "tip": {"sha": "sha-2"}, "classification": "stale"}],
+            "report-2",
+            last_seen,
+        )
+
+        branch = self.sm.get_branch_review("maya")["branches"]["feature"]
+        self.assertEqual(branch["first_seen"], first_seen)
+        self.assertEqual(branch["last_seen"], last_seen)
+        self.assertEqual(branch["last_sha"], "sha-2")
+        self.assertEqual(branch["classification"], "stale")
+        self.assertTrue(branch["present"])
+        self.assertIsNone(branch["missing_since"])
+        self.assertEqual(
+            self.sm.get_branch_review("maya")["last_semantic_change_date"],
+            "2027-01-16",
+        )
+
+    def test_branch_observation_keeps_missing_branch_tombstone_until_after_90_days(self):
+        first_seen = 1_800_000_000
+        self.sm.record_branch_observation(
+            "maya",
+            [{"name": "feature", "tip": {"sha": "sha-1"}, "classification": "active"}],
+            "report-1",
+            first_seen,
+        )
+        missing_since = first_seen + 86400
+        self.sm.record_branch_observation("maya", [], "report-2", missing_since)
+
+        tombstone = self.sm.get_branch_review("maya")["branches"]["feature"]
+        self.assertFalse(tombstone["present"])
+        self.assertEqual(tombstone["missing_since"], missing_since)
+        self.assertEqual(tombstone["last_seen"], first_seen)
+
+        at_expiry = missing_since + (90 * 86400)
+        self.sm.record_branch_observation("maya", [], "report-2", at_expiry)
+        self.assertIn("feature", self.sm.get_branch_review("maya")["branches"])
+
+        after_expiry = at_expiry + 1
+        self.sm.record_branch_observation("maya", [], "report-2", after_expiry)
+        self.assertNotIn("feature", self.sm.get_branch_review("maya")["branches"])
+
+    def test_branch_observation_persists_across_restarts(self):
+        self.sm.record_branch_observation(
+            "maya",
+            [{"name": "main", "tip": {"sha": "sha-main"}, "classification": "active"}],
+            "report-1",
+            1_800_000_000,
+        )
+
+        reloaded = StateManager(self.state_dir)
+
+        self.assertEqual(reloaded.get_branch_review("maya"), self.sm.get_branch_review("maya"))
+
     def test_state_dir_created_recursively(self):
         # Default state dir (~/.local/state/janitor) may not exist yet, so a
         # nested path must be created on construction.

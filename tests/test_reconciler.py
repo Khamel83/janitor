@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import janitor.reconciler as reconciler
 from janitor.reconciler import (
     ensure_claude_symlink,
     merge_sentinel_block,
@@ -127,6 +128,20 @@ class TestMergeSentinelBlock(unittest.TestCase):
         self.assertIn("- C", text)
         self.assertNotIn("- A", text)
         self.assertNotIn("- B", text)
+
+    def test_extract_and_remove_sentinel_block_preserve_outside_bytes(self):
+        text = (
+            "before\n<!-- janitor:begin:branches -->\nold\n"
+            "<!-- janitor:end:branches -->\nafter\n"
+        )
+        self.assertEqual(reconciler.extract_sentinel_block(text, "branches"), "old")
+        self.assertEqual(
+            reconciler.remove_sentinel_block(text, "branches"), "before\nafter\n"
+        )
+
+    def test_missing_or_malformed_sentinel_is_left_unchanged_by_remove(self):
+        text = "human <!-- janitor:begin:branches --> no end"
+        self.assertEqual(reconciler.remove_sentinel_block(text, "branches"), text)
 
 
 class TestEnsureClaudeSymlink(unittest.TestCase):

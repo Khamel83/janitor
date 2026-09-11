@@ -19,6 +19,7 @@ unreadable file degrades to an empty state rather than crashing.
 import hashlib
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,7 @@ DEFAULT_STATE_DIR = Path.home() / ".local" / "state" / "janitor"
 
 # Seconds in one day; used for WIP branch expiry cutoffs.
 _SECONDS_PER_DAY = 86400
+_BRANCH_TOMBSTONE_SECONDS = 90 * _SECONDS_PER_DAY
 
 
 class StateManager:
@@ -96,6 +98,77 @@ class StateManager:
     def get_last_run(self, repo_name: str) -> Optional[dict]:
         """Return the most recent recorded run ``{status, run_id, ts}`` or None."""
         return self._repo(repo_name).get("last_run")
+
+    def get_branch_review(self, repo_name: str) -> dict | None:
+        """Return compact branch continuity state for ``repo_name`` or None."""
+        repo = self._data.get(repo_name)
+        return repo.get("branch_review") if repo is not None else None
+
+    def record_branch_observation(
+        self,
+        repo_name: str,
+        rows: list[dict],
+        report_hash: str,
+        observed_at: int,
+    ) -> None:
+        """Record branch continuity and retain missing branches for 90 days."""
+        observed_at = int(observed_at)
+        observed_date = datetime.fromtimestamp(
+            observed_at, timezone.utc
+        ).date().isoformat()
+        repo = self._repo(repo_name)
+        review = repo.setdefault(
+            "branch_review",
+            {
+                "last_report_hash": None,
+                "last_semantic_change_date": None,
+                "branches": {},
+            },
+        )
+        previous_hash = review.get("last_report_hash")
+        if (
+            previous_hash != report_hash
+            or "last_semantic_change_date" not in review
+        ):
+            review["last_semantic_change_date"] = observed_date
+        review["last_report_hash"] = report_hash
+
+        branches = review.setdefault("branches", {})
+        seen = set()
+        for row in rows:
+            name = row["name"]
+            seen.add(name)
+            previous = branches.get(name, {})
+            tip = row.get("tip") or {}
+            branches[name] = {
+                "first_seen": previous.get("first_seen", observed_at),
+                "last_seen": observed_at,
+                "last_sha": tip.get("sha"),
+                "classification": row.get("classification"),
+                "present": True,
+                "missing_since": None,
+            }
+
+        cutoff = observed_at - _BRANCH_TOMBSTONE_SECONDS
+        for name in list(branches):
+            if name in seen:
+                continue
+            previous = branches[name]
+            missing_since = previous.get("missing_since")
+            if previous.get("present", True) or missing_since is None:
+                missing_since = observed_at
+            branches[name] = {
+                "first_seen": previous.get("first_seen"),
+                "last_seen": previous.get("last_seen"),
+                "last_sha": previous.get("last_sha"),
+                "classification": previous.get("classification"),
+                "present": False,
+                "missing_since": missing_since,
+            }
+            if missing_since < cutoff:
+                del branches[name]
+
+        self.save()
 
     def track_wip_branch(
         self,

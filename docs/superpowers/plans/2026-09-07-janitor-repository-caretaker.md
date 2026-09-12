@@ -1034,7 +1034,7 @@ git commit -m "feat(janitor): add CLI with fleet discovery, tidy, and structured
 
 ```bash
 #!/bin/bash
-# /usr/local/bin/janitor-runner on Mac mini
+# /Users/macmini/.local/bin/janitor-runner on Mac mini
 set -euo pipefail
 
 # Ensure standard PATH for Homebrew, Python, and local binaries
@@ -1059,8 +1059,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=khamel83
-ExecStart=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 macmini "caffeinate -is /usr/local/bin/janitor-runner sweep --all --json"
+ExecStart=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 macmini "caffeinate -is /Users/macmini/.local/bin/janitor-runner sweep --all --json"
 TimeoutStopSec=1800
 StandardOutput=journal
 StandardError=journal
@@ -1088,8 +1087,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=khamel83
-ExecStart=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 macmini "caffeinate -is /usr/local/bin/janitor-runner overview --all --json"
+ExecStart=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 macmini "caffeinate -is /Users/macmini/.local/bin/janitor-runner overview --all --json"
 TimeoutStopSec=1800
 StandardOutput=journal
 StandardError=journal

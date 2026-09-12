@@ -211,7 +211,7 @@ If any guard triggers, Janitor logs a structured warning and leaves the reposito
 
 ### 5.2 SSH Transport & Execution Hardening
 * **Non-Interactive Shell Environment:**
-  - Mac mini environment wrapper `/usr/local/bin/janitor-runner` explicitly sources `/etc/janitor/env` (mode 0600) pinning `PATH=/opt/homebrew/bin:/Users/macmini/.local/bin:/usr/bin:/bin` and `OPENCODE_GO_API_KEY`.
+  - Mac mini environment wrapper `/Users/macmini/.local/bin/janitor-runner` explicitly sources `/etc/janitor/env` (mode 0600) pinning `PATH=/opt/homebrew/bin:/Users/macmini/.local/bin:/usr/bin:/bin` and `OPENCODE_GO_API_KEY`.
 * **Homelab SSH Command Specification:**
   ```bash
   ssh -o BatchMode=yes \

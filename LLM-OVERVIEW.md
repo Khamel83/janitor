@@ -2,7 +2,7 @@
 > Current compressed briefing. Updated 2026-09-11. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
 
 ## What this repo is
-Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using Gateway2000 (`g2k-bg`) with fallback to free models ($0).
+Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using the sourced Gateway2000 `g2k` auto function, with the OpenRouter free-model fallback used only when no Gateway2000 auto helper is available.
 
 The system operates under strict safety invariants: preflight git guards skip repos undergoing interactive operations (merge, rebase, bisect, cherry-pick) or holding index locks; atomic stage/commit operations abort if extraneous files are staged; commit trailers (`Janitor-Run: <run_id>`) prevent self-triggering feedback loops; secret exclusions block `.env*` and key files; branch review never checks out, merges, deletes, resets, or pushes; and SHA-256 input hashing skips unnecessary LLM calls when repository state is unchanged.
 
@@ -16,7 +16,7 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Workspace: `/Volumes/2TB_SSD/GitHub/*` (80 git repositories).
   - Central docs hub: `/Volumes/2TB_SSD/GitHub/docs/repos/` (mirrored fleet overviews).
   - Local CLI: `janitor` (`/opt/homebrew/bin/janitor`) and runner wrapper `scripts/janitor-runner.sh` (`/Users/macmini/.local/bin/janitor-runner`).
-  - Model gateway: Gateway2000 (`/Users/macmini/.local/bin/g2k-bg` streaming via stdin `-p -`).
+  - Model gateway: sourced Gateway2000 `g2k` auto function (streaming via stdin `-p -`); OpenRouter free models are used only when no Gateway2000 auto helper is available.
 
 ## What is actually built
 - **`janitor.cli` (CLI & Fleet Discovery)**:
@@ -54,8 +54,8 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Tracks per-repo input hashes (`last_hash`), execution history (`last_run`), WIP branch records (`wip_branches`), branch continuity, and 90-day missing-branch tombstones.
 - **`janitor.worker` (Model Gateway Backend)**:
   - Model dispatching via `call_free` and `extract_structured`.
-  - Streams prompts over stdin to local Gateway2000 CLI (`g2k-bg` or `g2k`) to prevent system `ARG_MAX` limits.
-  - Fallback to `openrouter/free` HTTP API (requires `OPENROUTER_API_KEY`) with 3 retry attempts.
+  - Streams prompts over stdin to the sourced Gateway2000 `g2k` auto function (`g2k -p -`) to prevent system `ARG_MAX` limits.
+  - Falls back to the `openrouter/free` HTTP API only when no Gateway2000 auto helper is available (requires `OPENROUTER_API_KEY`) with 3 retry attempts.
   - Enforces rate limits (1000/day, 20/min) logged in `.janitor/usage.jsonl`.
 - **System & Automation Infrastructure**:
   - Systemd timer and service units (`systemd/janitor-sweep.timer`, `systemd/janitor-sweep.service`, `systemd/janitor-overview.timer`, `systemd/janitor-overview.service`).

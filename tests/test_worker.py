@@ -1,9 +1,9 @@
-"""Tests for janitor.worker: backend selection, stdin streaming and JSON parsing.
+"""Tests for janitor.worker: auto-helper selection, stdin streaming and JSON parsing.
 
 No real network or gateway calls are made here:
-- the gateway CLI and subprocess.run are mocked for the stdin-streaming path,
+- the Gateway2000 auto helper and subprocess.run are mocked for the stdin-streaming path,
 - urllib.request.urlopen is mocked for the openrouter/free HTTP fallback,
-- the no-backend tests run without a usable Gateway2000 backend and with
+- the no-backend tests run without a usable Gateway2000 auto helper and with
   OPENROUTER_API_KEY unset, and assert the clean failure instead of a crash.
 
 Run with: python3 -m unittest discover -s tests
@@ -48,7 +48,7 @@ def _git_repo(tmp: Path) -> Path:
 
 
 class NoBackendTestCase(unittest.TestCase):
-    """No usable Gateway2000 backend and no OPENROUTER_API_KEY: nothing to call."""
+    """No usable Gateway2000 auto helper and no OPENROUTER_API_KEY: nothing to call."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -79,7 +79,7 @@ class NoBackendTestCase(unittest.TestCase):
 
 
 class GatewayStreamingTestCase(unittest.TestCase):
-    """The auto lane must stream the payload over stdin via AUTO_COMMAND."""
+    """The Gateway2000 auto lane must stream the payload over stdin via AUTO_COMMAND."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -217,9 +217,9 @@ def _mock_http_fallback(content: str):
 
 
 class OpenRouterFallbackTestCase(unittest.TestCase):
-    """No Gateway2000 backend: call_free falls back to openrouter/free HTTP."""
+    """No Gateway2000 auto helper: call_free falls back to openrouter/free HTTP."""
 
-    def test_http_fallback_when_no_gateway_backend(self):
+    def test_http_fallback_when_no_gateway_auto_helper(self):
         content = '{"context_md": "ctx", "todo_md": "todo"}'
         with _mock_http_fallback(content) as urlopen:
             resp = call_free("hello", system="sys")

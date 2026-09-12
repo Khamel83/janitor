@@ -64,8 +64,9 @@ Janitor runs on a dual-cadence master–worker schedule orchestrated by systemd 
 │             MAC MINI (Worker & Storage Node)           │
 │  - Repositories: /Volumes/2TB_SSD/GitHub/*             │
 │  - Central Docs Hub: /Volumes/2TB_SSD/GitHub/docs/repos│
-│  - Inference: Gateway2000 (g2k-bg via stdin streaming) │
-│    (fallback: OpenRouter free models via HTTPS)        │
+│  - Inference: Gateway2000 auto via sourced g2k + stdin │
+│    (fallback: OpenRouter free models via HTTPS only    │
+│     without the Gateway2000 auto helper)               │
 │  - State & Telemetry: ~/.local/state/janitor/state.json│
 └────────────────────────────────────────────────────────┘
 ```

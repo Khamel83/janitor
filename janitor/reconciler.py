@@ -16,8 +16,9 @@ Owns the two recurring documentation jobs of the janitor:
   human. When a central docs repository exists and is clean, the overview is
   also mirrored there under ``repos/<repo-name>.md``.
 
-Model calls go through janitor.worker's gateway (g2k-bg/g2k when present,
-openrouter/free otherwise) — the same $0 budget and rate limiting as every
+Model calls go through janitor.worker's sourced Gateway2000 `g2k` auto function
+when the helper is present; openrouter/free is used only when no Gateway2000
+auto helper is available — the same $0 budget and rate limiting as every
 other job in this package.
 """
 

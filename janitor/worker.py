@@ -1,9 +1,9 @@
 """Model caller for janitor tasks.
 
-Prefers Gateway2000 (`g2k-bg`/`g2k`) when it's on PATH — that's the
-standard model gateway on machines that run janitor. Falls back to a
-direct HTTP call to openrouter/free (no SDK dependency) when no gateway
-CLI is available, e.g. CI or a machine without g2k installed.
+Gateway2000 auto is preferred when its explicit helper and zsh are installed;
+g2k-bg is never selected. Falls back to a direct HTTP call to openrouter/free
+(no SDK dependency) when Gateway2000 auto is unavailable, e.g. CI or a
+machine without the helper installed.
 
 Used for bounded extraction/summarization tasks where $0 cost matters
 more than model quality.
@@ -31,6 +31,12 @@ DAILY_LIMIT = 1000
 MINUTE_LIMIT = 20
 
 _cached_api_key: str | None = None
+
+GATEWAY_HELPER = Path.home() / ".config" / "gateway2000" / "gateway2000.zsh"
+AUTO_GATEWAY_SCRIPT = (
+    'source "$HOME/.config/gateway2000/gateway2000.zsh" '
+    '&& g2k -p -'
+)
 
 
 def _get_api_key() -> str:
@@ -170,39 +176,38 @@ def get_usage_stats() -> dict:
     }
 
 
-def _gateway_cli() -> str | None:
-    """Path to g2k-bg/g2k if either is on PATH, else None."""
-    return shutil.which("g2k-bg") or shutil.which("g2k")
+def _gateway_command() -> tuple[list[str], str] | None:
+    """Return the explicit Gateway2000 auto command, if installed."""
+    zsh = shutil.which("zsh")
+    if not zsh or not GATEWAY_HELPER.is_file():
+        return None
+    return ([zsh, "-lc", AUTO_GATEWAY_SCRIPT], "gateway2000/auto")
 
 
-def _call_gateway(cli: str, prompt: str, system: str | None, timeout: int) -> str:
-    """Call the local Gateway2000 CLI at `cli`. Raises RuntimeError on failure.
-
-    The payload is streamed over stdin (`-p -`) rather than embedded in argv:
-    prompts can exceed the OS ARG_MAX limit, and argv quoting mangles large
-    payloads. g2k-bg/g2k take a single `-p` argument, so system and user
-    content are concatenated here rather than sent as separate roles the way
-    the openrouter/free HTTP path does. There's no real instruction/data
-    separation at this layer — callers that pass untrusted repo content in
-    `prompt` should delimit it themselves (see janitor.docs's REPO CONTENT
-    markers) as a best-effort mitigation, not a substitute for role separation.
-    """
+def _call_gateway(
+    command: list[str], label: str, prompt: str, system: str | None, timeout: int
+) -> str:
+    """Call Gateway2000 auto with the payload streamed over stdin."""
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     try:
         res = subprocess.run(
-            [cli, "-p", "-"],
+            command,
             input=full_prompt,
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"{cli} timed out after {timeout}s")
+        raise RuntimeError(f"{label} timed out after {timeout}s")
     if res.returncode != 0:
-        raise RuntimeError(f"{cli} failed (exit {res.returncode}): {res.stderr.strip()[:200]}")
+        raise RuntimeError(
+            f"{label} failed (exit {res.returncode}): {res.stderr.strip()[:200]}"
+        )
 
     raw = res.stdout.strip()
     raw = re.sub(r"^```(?:json|markdown)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
-    _log_usage(os.path.basename(cli))
+    _log_usage(label)
     return raw.strip()
 
 
@@ -214,15 +219,16 @@ def call_free(
 ) -> str:
     """Send a prompt to the model gateway and return the response text.
 
-    Uses g2k-bg/g2k when present on PATH; otherwise falls back to a direct
-    openrouter/free HTTP call.
+    Uses Gateway2000 auto when its helper is installed; otherwise falls back
+    to a direct openrouter/free HTTP call.
     """
     if not _check_rate_limit():
         raise RuntimeError("Rate limit reached. Wait before retrying.")
 
-    gateway = _gateway_cli()
+    gateway = _gateway_command()
     if gateway:
-        return _call_gateway(gateway, prompt, system, timeout)
+        command, label = gateway
+        return _call_gateway(command, label, prompt, system, timeout)
 
     api_key = _get_api_key()
 

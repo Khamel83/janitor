@@ -3,7 +3,7 @@
 No real network or gateway calls are made here:
 - the gateway CLI and subprocess.run are mocked for the stdin-streaming path,
 - urllib.request.urlopen is mocked for the openrouter/free HTTP fallback,
-- the no-backend tests run with a PATH that excludes g2k-bg/g2k and with
+- the no-backend tests run without a usable Gateway2000 backend and with
   OPENROUTER_API_KEY unset, and assert the clean failure instead of a crash.
 
 Run with: python3 -m unittest discover -s tests
@@ -22,11 +22,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import janitor.worker as worker
 from janitor.worker import call_free, extract_structured
 from janitor.reconciler import sweep_repo
 from janitor.state import StateManager
 
-GATEWAY = "/mock/bin/g2k-bg"
+AUTO_COMMAND = [
+    "/bin/zsh",
+    "-lc",
+    'source "$HOME/.config/gateway2000/gateway2000.zsh" && g2k -p -',
+]
+AUTO_LABEL = "gateway2000/auto"
 
 
 def _git_repo(tmp: Path) -> Path:
@@ -42,14 +48,14 @@ def _git_repo(tmp: Path) -> Path:
 
 
 class NoBackendTestCase(unittest.TestCase):
-    """Empty PATH (no g2k-bg/g2k) and no OPENROUTER_API_KEY: nothing to call."""
+    """No usable Gateway2000 backend and no OPENROUTER_API_KEY: nothing to call."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self._old_path = os.environ.get("PATH", "")
-        # Real git must stay reachable, but g2k-bg/g2k must not be — so scope
-        # PATH to just git's own directory rather than an empty one.
+        # Real git must stay reachable, so scope PATH to just git's own
+        # directory rather than an empty one.
         git_path = shutil.which("git")
         assert git_path, "git must be on PATH to run this test"
         os.environ["PATH"] = str(Path(git_path).parent)
@@ -73,11 +79,37 @@ class NoBackendTestCase(unittest.TestCase):
 
 
 class GatewayStreamingTestCase(unittest.TestCase):
-    """_call_gateway must stream the payload over stdin via [cli, "-p", "-"]."""
+    """The auto lane must stream the payload over stdin via AUTO_COMMAND."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_gateway_command_sources_auto_helper_without_background_lookup(self):
+        helper = self.tmp / "gateway2000.zsh"
+        helper.write_text("g2k() { :; }\n")
+        looked_up = []
+
+        def which(name):
+            looked_up.append(name)
+            return "/bin/zsh" if name == "zsh" else None
+
+        with (
+            patch.object(worker, "GATEWAY_HELPER", helper),
+            patch.object(worker.shutil, "which", side_effect=which),
+        ):
+            command = worker._gateway_command()
+
+        self.assertEqual(command, (AUTO_COMMAND, AUTO_LABEL))
+        self.assertNotIn("g2k-bg", looked_up)
+        self.assertNotIn("g2k-bg", command[0][2])
 
     def _completed(self, stdout: str = "", returncode: int = 0, stderr: str = ""):
         return subprocess.CompletedProcess(
-            args=[GATEWAY, "-p", "-"],
+            args=AUTO_COMMAND,
             returncode=returncode,
             stdout=stdout,
             stderr=stderr,
@@ -88,7 +120,7 @@ class GatewayStreamingTestCase(unittest.TestCase):
         with (
             patch("janitor.worker._check_rate_limit", return_value=True),
             patch("janitor.worker._log_usage") as log,
-            patch("janitor.worker._gateway_cli", return_value=GATEWAY),
+            patch("janitor.worker._gateway_command", return_value=(AUTO_COMMAND, AUTO_LABEL)),
             patch("janitor.worker.subprocess.run", return_value=completed) as mock_run,
         ):
             resp = call_free("test prompt", system="test system")
@@ -96,31 +128,31 @@ class GatewayStreamingTestCase(unittest.TestCase):
         self.assertEqual(resp, '{"context_md": "ctx", "todo_md": "todo"}')
         args, kwargs = mock_run.call_args
         # Payload must go via stdin, never argv: ["<cli>", "-p", "-"]
-        self.assertEqual(args[0], [GATEWAY, "-p", "-"])
+        self.assertEqual(args[0], AUTO_COMMAND)
         self.assertEqual(kwargs["input"], "test system\n\ntest prompt")
         self.assertIs(kwargs["capture_output"], True)
         self.assertEqual(kwargs["timeout"], 180)
-        log.assert_called_once_with("g2k-bg")
+        log.assert_called_once_with(AUTO_LABEL)
 
     def test_call_free_without_system_streams_prompt_only(self):
         with (
             patch("janitor.worker._check_rate_limit", return_value=True),
             patch("janitor.worker._log_usage"),
-            patch("janitor.worker._gateway_cli", return_value=GATEWAY),
+            patch("janitor.worker._gateway_command", return_value=(AUTO_COMMAND, AUTO_LABEL)),
             patch("janitor.worker.subprocess.run", return_value=self._completed(stdout="ok")) as mock_run,
         ):
             resp = call_free("bare prompt")
 
         args, kwargs = mock_run.call_args
-        self.assertEqual(args[0], [GATEWAY, "-p", "-"])
+        self.assertEqual(args[0], AUTO_COMMAND)
         self.assertEqual(kwargs["input"], "bare prompt")
         self.assertEqual(resp, "ok")
 
     def test_gateway_timeout_raises_runtime_error(self):
-        timeout = subprocess.TimeoutExpired(cmd=[GATEWAY, "-p", "-"], timeout=180)
+        timeout = subprocess.TimeoutExpired(cmd=AUTO_COMMAND, timeout=180)
         with (
             patch("janitor.worker._check_rate_limit", return_value=True),
-            patch("janitor.worker._gateway_cli", return_value=GATEWAY),
+            patch("janitor.worker._gateway_command", return_value=(AUTO_COMMAND, AUTO_LABEL)),
             patch("janitor.worker.subprocess.run", side_effect=timeout),
         ):
             with self.assertRaises(RuntimeError) as ctx:
@@ -131,7 +163,7 @@ class GatewayStreamingTestCase(unittest.TestCase):
         completed = self._completed(returncode=1, stderr="model exploded")
         with (
             patch("janitor.worker._check_rate_limit", return_value=True),
-            patch("janitor.worker._gateway_cli", return_value=GATEWAY),
+            patch("janitor.worker._gateway_command", return_value=(AUTO_COMMAND, AUTO_LABEL)),
             patch("janitor.worker.subprocess.run", return_value=completed),
         ):
             with self.assertRaises(RuntimeError) as ctx:
@@ -143,7 +175,7 @@ class GatewayStreamingTestCase(unittest.TestCase):
         with (
             patch("janitor.worker._check_rate_limit", return_value=True),
             patch("janitor.worker._log_usage"),
-            patch("janitor.worker._gateway_cli", return_value=GATEWAY),
+            patch("janitor.worker._gateway_command", return_value=(AUTO_COMMAND, AUTO_LABEL)),
             patch("janitor.worker.subprocess.run", return_value=completed),
         ):
             resp = call_free("prompt")
@@ -177,7 +209,7 @@ def _mock_http_fallback(content: str):
     with (
         patch("janitor.worker._check_rate_limit", return_value=True),
         patch("janitor.worker._log_usage"),
-        patch("janitor.worker._gateway_cli", return_value=None),
+        patch("janitor.worker._gateway_command", return_value=None),
         patch("janitor.worker._get_api_key", return_value="sk-test-key"),
         patch("urllib.request.urlopen", return_value=_FakeHTTPResponse(body)) as urlopen,
     ):
@@ -185,9 +217,9 @@ def _mock_http_fallback(content: str):
 
 
 class OpenRouterFallbackTestCase(unittest.TestCase):
-    """No gateway CLI on PATH: call_free falls back to openrouter/free HTTP."""
+    """No Gateway2000 backend: call_free falls back to openrouter/free HTTP."""
 
-    def test_http_fallback_when_no_gateway_cli(self):
+    def test_http_fallback_when_no_gateway_backend(self):
         content = '{"context_md": "ctx", "todo_md": "todo"}'
         with _mock_http_fallback(content) as urlopen:
             resp = call_free("hello", system="sys")

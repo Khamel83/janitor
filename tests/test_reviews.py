@@ -378,6 +378,29 @@ class ReviewCollectorTests(unittest.TestCase):
             json.loads((self.state / "morning/latest.json").read_text())["snapshot"],
             report["artifacts"]["directory"],
         )
+
+    def test_published_handoff_over_original_cap_is_collected(self):
+        original_api = FakeGitHub.api
+        handoff = "h" * (128 * 1024 + 1)
+        encoded = base64.b64encode(handoff.encode()).decode()
+
+        def api(client, path, *args, **kwargs):
+            if "/contents/HANDOFF.md" in path:
+                return {
+                    "type": "file",
+                    "encoding": "base64",
+                    "size": len(handoff),
+                    "content": encoded,
+                }
+            return original_api(client, path, *args, **kwargs)
+
+        with patch.object(FakeGitHub, "api", api):
+            report = self.collect()
+
+        pr = self.pr(report)
+        self.assertTrue(report["complete"])
+        self.assertTrue(pr["original_documents"]["HANDOFF.md"]["complete"])
+        self.assertEqual(pr["original_documents"]["HANDOFF.md"]["text"], handoff)
         latest = (self.state / "morning/latest.md").read_text()
         report_markdown = Path(report["artifacts"]["markdown"]).read_text()
         for label, key in (

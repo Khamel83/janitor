@@ -16,7 +16,7 @@ from janitor.github import GitHub, GitHubError
 
 REVIEWER_LOGIN = "khamel-homelab-pr-reviewer[bot]"
 DOCUMENTS = ("CONTEXT.md", "TODO.md", "HANDOFF.md")
-MAX_DOCUMENT_BYTES = 128 * 1024
+MAX_DOCUMENT_BYTES = 256 * 1024
 _MARKER = re.compile(
     r"<!-- homelab-github-pr-reviewer:(?P<value>[0-9a-fA-F]{40}|trigger:[^\s>]+) -->"
 )

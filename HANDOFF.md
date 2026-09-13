@@ -1,6 +1,18 @@
 # Janitor operational handoff
 
-Updated 2026-09-12, 18:06 America/Los_Angeles. Existing caretaker accepted and schedules restored.
+Updated 2026-09-13. Existing caretaker accepted; overnight PR workflow delivery is in progress. This section will record fresh deployment and downstream receipts before completion is claimed.
+
+## New authorized workflow
+
+Original context -> Janitor documentation PRs -> existing Homelab PR reviewer ->
+private morning evidence packet -> user's final agent recommends MERGE / RE-CHECK.
+No PR is automatically merged. Existing code PRs are included in the packet;
+unpublished WIP is not automatically published. The reviewer service is unchanged.
+
+The implementation plan is `docs/superpowers/plans/2026-09-13-overnight-prs.md`.
+New units target publication at 03:30 Pacific and collection at 06:00 Pacific;
+their presence in source alone does not mean deployment. Live acceptance is pending.
+Use WORKER-PROMPT.md for the final agent, and TODO.md for remaining delivery gates.
 
 ## Current state
 

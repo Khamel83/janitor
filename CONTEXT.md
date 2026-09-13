@@ -1,6 +1,16 @@
 # Current operator context
 
-Updated 2026-09-12, 18:06 America/Los_Angeles. Janitor's existing caretaker is accepted and scheduled. Read TODO.md for scope and HANDOFF.md for receipts and recheck commands. No fresh completion worker is needed.
+Updated 2026-09-13. Janitor's existing caretaker is accepted. The user authorized documentation PR publication plus a layered morning review packet; implementation and live acceptance are tracked in TODO.md and HANDOFF.md.
+
+## Review language
+
+**Original context**: The repository's intent and human-maintained priorities before a PR's changes. Later review layers supplement it; they do not replace it.
+
+**Documentation PR**: Janitor's proposed updates to generated documentation sections. It is not an implementation of the target project's TODOs.
+
+**Morning packet**: A local snapshot of original context, open PR changes, review findings, and check evidence for the final agent.
+
+**Final review**: The user's agent compares all PRs and their dependencies against the original intent, then recommends MERGE or RE-CHECK. A recommendation is not merge authority.
 
 The final timer-driven run, run_1789261279, covered all 81 targets with zero failures: 47 quiet, 27 unchanged_hash, seven written. The service exited 0 after 4m42s. Both timers are active/enabled: daily 03:00 and Sunday 04:00 Pacific. The temporary acceptance override was removed, and user lingering is enabled.
 
@@ -19,7 +29,7 @@ Active focus: routine unattended operation of the accepted caretaker.
 ### Watch items
 - Dirty/non-default checkouts receive documentation drafts; overview never auto-commits.
 - Central overview mirroring defers when the docs repository has protected dirty files.
-- Reminders and integrations are deferred; Janitor does not execute other projects' TODOs.
+- PR publication and the morning evidence packet are the new authorized scope; Janitor still does not execute other projects' TODOs.
 <!-- janitor:end:recent -->
 
 <!-- janitor:begin:branches -->

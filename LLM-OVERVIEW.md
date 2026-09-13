@@ -1,5 +1,5 @@
 # LLM-OVERVIEW — janitor
-> Current compressed briefing. Updated 2026-09-12. Existing caretaker accepted: final timer-driven sweep covered 81 targets with zero failures; schedules active/enabled. Read TODO.md for scope and HANDOFF.md for operational evidence. This derived file is not an independent authority.
+> Current compressed briefing. Updated 2026-09-13. Existing caretaker accepted; overnight documentation PRs and a layered morning packet are the new authorized scope. Read TODO.md for completion status and HANDOFF.md for deployment evidence. This derived file is not an independent authority.
 
 ## What this repo is
 Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using the sourced Gateway2000 `g2k` auto function, with the OpenRouter free-model fallback used only when no Gateway2000 auto helper is available.
@@ -63,6 +63,9 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Execution runner wrapper (`scripts/janitor-runner.sh`).
 
 ## Canonical entry points
+- `janitor publish [repo ...] [--all] [--dry-run] [--limit 20]`: Propose documentation-only PRs from published evidence; never publish local WIP or merge anything. Existing Janitor PRs remain intact for review.
+- `janitor reviews [repo ...] [--all]`: Collect all open owned-repository PRs into private local morning artifacts. Original context, changes, findings, and current-head checks remain separate layers. No model call or GitHub mutation.
+- `~/.local/state/janitor/morning/latest.md`: Latest packet for the user's final agent; use WORKER-PROMPT.md to assess cumulative changes and recommend MERGE / RE-CHECK. A bot pass is not merge approval.
 - `janitor status --all`: Git status and last-run records across discovered fleet repositories; this is not downstream acceptance by itself.
 - `janitor sweep [--all]`: Reconcile living documentation (`CONTEXT.md`, `TODO.md`) with auto-tidy pre-pass.
 - `janitor branches [repo ...] [--all] [--json] [--no-fetch]`: Review local/remote-tracking branches and linked worktrees without branch actions.

@@ -7,19 +7,12 @@ The final timer-driven run, run_1789261279, covered all 81 targets with zero fai
 Branch-table freshness below refers to its saved observation, not the current moment. The pre-existing test import cleanup was verified and published in bb702bd; preserve any new unrelated work.
 
 <!-- janitor:begin:recent -->
-Active focus: routine unattended operation of the accepted caretaker.
-
-### Verified accomplishments
-- Fixed the actual fleet defect: non-repository SSH workers now create/use the state-directory usage log (77b34fc).
-- Bounded synthesis and cancellation, excluded overlapping mutating runs, and added incremental sanitized receipts (902fa8e).
-- Kept scheduled journal output concise (d846788).
-- Kept Gateway2000 auto with synthesis-only inputs and low reasoning (763e9d8); provider configuration remains unchanged.
-- Passed 166 offline tests, Ruff, unit validation, targeted sweep/overview checks, and the final 81-target timer-driven sweep.
-
-### Watch items
-- Dirty/non-default checkouts receive documentation drafts; overview never auto-commits.
-- Central overview mirroring defers when the docs repository has protected dirty files.
-- Reminders and integrations are deferred; Janitor does not execute other projects' TODOs.
+- Commit 3823678664a90672d52449f48bcfc1ae7effccea recorded a final clean checkout and import cleanup.
+- Commit bb702bdd3b87eda88fbb631a55756322f8602912 normalized git operations test imports.
+- Commit 05f62a543360466b98926bb7166d23fa6093b054 closed Janitor acceptance and restored a single current operational handoff.
+- Commit 763e9d8387acb372b77dea1a76df332a30736c07 switched to low reasoning for bounded documentation synthesis.
+- Commit d8467883c3be26089c542f6b31b4beb2d45018eb kept scheduled journal output concise with durable JSONL receipts.
+- Commit 77b34fca964afc70240c5bf52170f0b9879f3c4a fixed usage log state path creation for non-repository SSH workers.
 <!-- janitor:end:recent -->
 
 <!-- janitor:begin:branches -->

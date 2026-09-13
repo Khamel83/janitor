@@ -13,7 +13,7 @@
 - Never merge PRs, force-push, modify default branches, publish local WIP, execute target repository code, or change the reviewer service.
 - Publish only CONTEXT.md and TODO.md sentinel sections from evidence already on the same GitHub repository; preserve text outside those sections. Never upload local paths, dirty files, branch inventories, or local context.
 - Discover GitHub origin identities from the existing workspace and deduplicate owner/repo case-insensitively. Publishing is restricted to repositories owned by the authenticated GitHub user, with push permission, not forks or archived repositories.
-- At most 20 new documentation PRs per invocation, one open Janitor documentation PR per repository. Existing open PRs are left intact for review, including any reviewer or human changes. There is no PR count guarantee.
+- At most 20 new documentation PRs per invocation and rolling 24 hours, one open Janitor documentation PR per repository. Existing open PRs are left intact for review, including any reviewer or human changes. There is no PR count guarantee.
 - All API calls have finite timeouts; all list endpoints paginate with an explicit upper bound and fail visibly when incomplete. No raw credential/API error bodies in logs. No API mutations or model calls in dry-run.
 - No new model provider, reviewer, repair loop, budget subsystem, or notification service. Use existing extract_structured for bounded synthesis; stop publishing after three consecutive synthesis failures. Gateway2000 is the provider boundary.
 - Local morning artifacts are private, atomic, timestamped snapshots plus latest pointers. Capture errors and stale/pending reviews as such, never as success. A final agent receives instructions to independently compare original intent, all PRs together, dependencies, and findings; recommendations only, no merge authority.
@@ -50,7 +50,7 @@ The user wants layered work: original context -> Janitor changes in PRs -> exist
 
 ## Controller-owned delivery
 
-- [ ] Add systemd publication at 03:30 Pacific and collection at 06:00 Pacific via existing SSH runner. Publication is independent of the overview; collector reads remote evidence only. Lock contention is visible and retried by service policy within finite bounds. Existing 03:00 sweep and Sunday 04:00 overview remain enabled.
+- [ ] Add systemd publication at 03:30 Pacific and collection at 06:00 Pacific via existing SSH runner. Order mutating services sweep -> publish -> overview if simultaneously active; collector reads remote evidence only and uses a separate lock. Lock contention is visible and retried by service policy within finite bounds. Existing 03:00 sweep and Sunday 04:00 overview remain enabled.
 - [ ] Reconcile README, CONTEXT, HANDOFF, TODO, LLM-OVERVIEW, WORKER-PROMPT with actual new capabilities and final-review command. Preserve generated and human sections. Do not label deployment complete until verified.
 - [ ] Run independent review, full offline tests, Ruff, unit validation; push source and deploy verified code. Open a real Janitor documentation canary PR, verify matching reviewer receipt, collect the real report, and confirm an unchanged repeat produces no duplicate PR/model call.
 - [ ] Enable timers only after canary success; run the bounded first fleet publication now and collect fresh results. Verify enabled next triggers and durable receipt paths. Report actual PR counts, pending review status, and exact morning artifact path without promising a count or automatic merges.

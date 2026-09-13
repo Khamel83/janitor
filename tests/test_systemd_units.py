@@ -20,6 +20,8 @@ class TestSystemdUnits(unittest.TestCase):
             self.assertNotIn("/usr/local/bin/janitor-runner", unit)
 
     def test_pr_units_are_bounded_and_keep_pacific_cadence(self):
+        self.assertIn("janitor-sweep.service", (SYSTEMD_DIR / "janitor-publish.service").read_text())
+        self.assertIn("janitor-publish.service", (SYSTEMD_DIR / "janitor-overview.service").read_text())
         for name, clock, command in (
             ("publish", "03:30:00", "publish --all --limit 20"),
             ("reviews", "06:00:00", "reviews --all"),

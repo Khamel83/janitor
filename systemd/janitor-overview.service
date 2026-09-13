@@ -1,6 +1,6 @@
 [Unit]
 Description=Janitor Weekly Architecture Overview
-After=network-online.target tailscaled.service
+After=network-online.target tailscaled.service janitor-publish.service
 Wants=network-online.target
 
 [Service]

@@ -30,7 +30,8 @@ Janitor summarizes repository evidence. It does not implement projects' TODOs, c
 - Herdr and unrelated integrations remain out of scope.
 
 <!-- janitor:begin:todo -->
-- [x] Existing caretaker implementation and branch/worktree review.
-- [x] Gateway2000 auto routing and SSH usage-log recovery.
-- [x] Targeted and fleet operational acceptance; schedules restored.
+- [x] Record final clean checkout and test import cleanup in repository evidence (3823678664a90672d52449f48bcfc1ae7effccea, bb702bdd3b87eda88fbb631a55756322f8602912).
+- [x] Close Janitor acceptance and restore single operational handoff (05f62a543360466b98926bb7166d23fa6093b054).
+- [x] Enforce low reasoning for bounded documentation synthesis (763e9d8387acb372b77dea1a76df332a30736c07).
+- [x] Ensure usage-log state path creation for non-repository SSH workers and concise journal receipts (77b34fca964afc70240c5bf52170f0b9879f3c4a, d8467883c3be26089c542f6b31b4beb2d45018eb).
 <!-- janitor:end:todo -->

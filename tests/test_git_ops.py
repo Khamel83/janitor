@@ -1,8 +1,8 @@
 import subprocess
 import tempfile
-from unittest import mock
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from janitor.git_ops import (
     atomic_stage_and_commit,

@@ -26,7 +26,7 @@ INTENTS_DIRECTORY = "publication-intents"
 MAX_DOCUMENT_BYTES = 128 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 TOTAL_DEADLINE_SECONDS = 2700
-ROLLING_PUBLICATION_CAP = 20
+ROLLING_PUBLICATION_CAP = 100
 SYNTHESIS_FAILURE_CAP = 3
 
 PUBLISH_SYSTEM = (
@@ -66,6 +66,16 @@ class PublicationError(RuntimeError):
 
 class DeadlineExceeded(PublicationError):
     """The invocation can no longer safely start another bounded call."""
+
+
+class PublicationProgressError(RuntimeError):
+    """A sanitized failure wrapper retaining already-known publication IDs."""
+
+    def __init__(self, cause: Exception, *, base: str, head: str):
+        super().__init__("publication_failed_after_commit")
+        self.cause = cause
+        self.base = base
+        self.head = head
 
 
 def _now() -> datetime:
@@ -527,6 +537,7 @@ def _publish_one(
     state_dir: Path,
     processed: dict,
     deadline: float,
+    synthesis_state: dict[str, bool],
     *,
     dry_run: bool,
 ) -> dict:
@@ -617,7 +628,10 @@ def _publish_one(
             raise PublicationError("unknown_branch_ownership") from exc
         if remote_sha != commit_sha:
             raise PublicationError("unknown_branch_ownership")
-        pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
+        try:
+            pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
+        except Exception as exc:
+            raise PublicationProgressError(exc, base=base, head=commit_sha) from exc
         _mark_processed(state_dir, processed, full_name, base, intent["evidence_digest"], "published")
         return _result(full_name, "published", base=base, head=commit_sha, pr_url=pull["html_url"])
 
@@ -652,6 +666,7 @@ def _publish_one(
         if not isinstance(generated, dict) or not isinstance(changed, list):
             raise PublicationError("invalid_publication_intent")
     else:
+        synthesis_state["attempted"] = True
         response = _call(
             deadline,
             extract_structured,
@@ -661,6 +676,7 @@ def _publish_one(
             timeout=180,
         )
         recent, todo = _validate_synthesis(response)
+        synthesis_state["succeeded"] = True
         generated = {
             "CONTEXT.md": _merge_document(texts["CONTEXT.md"], "recent", recent),
             "TODO.md": _merge_document(texts["TODO.md"], "todo", todo),
@@ -695,7 +711,7 @@ def _publish_one(
             tree_entries = [
                 {
                     "path": filename,
-                    "mode": "100644",
+                    "mode": root_entries.get(filename, {}).get("mode", "100644"),
                     "type": "blob",
                     "content": generated[filename],
                 }
@@ -735,12 +751,21 @@ def _publish_one(
     )
     intent["branch_created"] = True
     _save_intent(state_dir, intent)
-    pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
+    try:
+        pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
+    except Exception as exc:
+        raise PublicationProgressError(exc, base=base, head=commit_sha) from exc
     _mark_processed(state_dir, processed, full_name, base, digest, "published")
     return _result(full_name, "published", base=base, head=commit_sha, pr_url=pull["html_url"])
 
 
 def _safe_failure(repo: str, exc: BaseException) -> dict:
+    base = None
+    head = None
+    if isinstance(exc, PublicationProgressError):
+        base = exc.base
+        head = exc.head
+        exc = exc.cause
     if isinstance(exc, GitHubError):
         error = f"github_http_{exc.status}" if exc.status is not None else "github_transport_failure"
     elif isinstance(exc, DeadlineExceeded):
@@ -749,15 +774,15 @@ def _safe_failure(repo: str, exc: BaseException) -> dict:
         error = str(exc)
     else:
         error = "unexpected_publication_failure"
-    return _result(repo, "failed", error=error)
+    return _result(repo, "failed", base=base, head=head, error=error)
 
 
 def publish_repositories(
     repos: list[str], state_dir: Path, *, dry_run: bool = False, limit: int = 20
 ) -> list[dict]:
     """Publish at most ``limit`` isolated documentation PRs from remote evidence."""
-    if not 1 <= limit <= 20:
-        raise ValueError("limit must be between 1 and 20")
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
     state_dir = Path(state_dir)
     _mkdir_private(state_dir)
     deadline = time.monotonic() + TOTAL_DEADLINE_SECONDS
@@ -786,7 +811,7 @@ def publish_repositories(
         login = user.get("login") if isinstance(user, dict) else None
         if not isinstance(login, str) or not login:
             raise PublicationError("invalid_authenticated_user")
-    except BaseException as exc:
+    except Exception as exc:
         results = [_safe_failure(repo, exc) for repo in unique]
         for result in results:
             _append_receipt(state_dir, result)
@@ -795,12 +820,14 @@ def publish_repositories(
     results: list[dict] = []
     published = 0
     consecutive_synthesis_failures = 0
+    synthesis_stopped = False
     for repo in unique:
+        synthesis_state = {"attempted": False, "succeeded": False}
         if not dry_run and rolling + published >= ROLLING_PUBLICATION_CAP:
             result = _result(repo, "cap_deferred", reason="rolling_24h_limit")
         elif not dry_run and published >= limit:
             result = _result(repo, "cap_deferred", reason="invocation_limit")
-        elif consecutive_synthesis_failures >= SYNTHESIS_FAILURE_CAP:
+        elif synthesis_stopped:
             result = _result(repo, "synthesis_deferred", reason="three_consecutive_synthesis_failures")
         else:
             try:
@@ -811,6 +838,7 @@ def publish_repositories(
                     state_dir,
                     processed,
                     deadline,
+                    synthesis_state,
                     dry_run=dry_run,
                 )
             except PublicationError as exc:
@@ -822,14 +850,16 @@ def publish_repositories(
                     result = _result(repo, "invalid_source", error=str(exc))
                 else:
                     result = _safe_failure(repo, exc)
-            except BaseException as exc:
+            except Exception as exc:
                 result = _safe_failure(repo, exc)
 
         if result["status"] == "published":
             published += 1
         if result["status"] == "synthesis_failed":
             consecutive_synthesis_failures += 1
-        else:
+            if consecutive_synthesis_failures >= SYNTHESIS_FAILURE_CAP:
+                synthesis_stopped = True
+        elif synthesis_state["succeeded"]:
             consecutive_synthesis_failures = 0
         _append_receipt(state_dir, result)
         results.append(result)

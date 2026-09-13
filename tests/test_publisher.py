@@ -7,7 +7,9 @@ No test performs a network request or invokes the synthesis backend.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -46,6 +48,7 @@ class FakeGitHub:
     instance: "FakeGitHub | None" = None
     seed_pulls: list[dict] = []
     push_permission = True
+    no_push_repos: set[str] = set()
     owner_login = "alice"
     fail_first_pr = False
     wrap_content_base64 = False
@@ -91,6 +94,7 @@ class FakeGitHub:
         cls.instance = None
         cls.seed_pulls = []
         cls.push_permission = True
+        cls.no_push_repos = set()
         cls.owner_login = "alice"
         cls.fail_first_pr = False
         cls.wrap_content_base64 = False
@@ -119,17 +123,20 @@ class FakeGitHub:
         self.calls.append((method, path, payload))
         if method == "GET" and path == "/user":
             return {"login": "alice", "id": 1, "type": "User"}
-        if method == "GET" and path == "/repos/alice/demo":
+        metadata_match = re.fullmatch(r"/repos/alice/([^/]+)", path)
+        if method == "GET" and metadata_match:
+            repo_name = metadata_match.group(1)
+            can_push = type(self).push_permission and repo_name not in type(self).no_push_repos
             return {
-                "full_name": "alice/demo",
+                "full_name": f"alice/{repo_name}",
                 "default_branch": "main",
                 "archived": False,
                 "fork": False,
                 "owner": {"login": type(self).owner_login, "id": 1, "type": "User"},
                 "permissions": {
-                    "admin": type(self).push_permission,
-                    "maintain": type(self).push_permission,
-                    "push": type(self).push_permission,
+                    "admin": can_push,
+                    "maintain": can_push,
+                    "push": can_push,
                     "triage": True,
                     "pull": True,
                 },
@@ -376,12 +383,19 @@ class PublisherTestCase(unittest.TestCase):
             second = publish_repositories(["alice/demo"], self.state_dir)
 
         self.assertEqual(first[0]["status"], "failed")
+        self.assertEqual(first[0]["base"], BASE_SHA)
+        self.assertEqual(first[0]["head"], GENERATED_COMMIT_SHA)
         self.assertEqual(second[0]["status"], "published")
         self.assertEqual(shared.tree_posts, 1)
         self.assertEqual(shared.commit_posts, 1)
         self.assertEqual(shared.ref_posts, 1)
         self.assertEqual(shared.pr_posts, 2)
         self.assertEqual(extract.call_count, 1)
+        first_receipt = json.loads(
+            (self.state_dir / "publication-receipts.jsonl").read_text().splitlines()[0]
+        )
+        self.assertEqual(first_receipt["base"], BASE_SHA)
+        self.assertEqual(first_receipt["head"], GENERATED_COMMIT_SHA)
 
     def test_all_existing_janitor_blocks_are_removed_from_evidence_but_preserved(self):
         branches = (
@@ -452,13 +466,114 @@ class PublisherTestCase(unittest.TestCase):
             "pr_url": "https://github.com/alice/other/pull/1",
         }
         (self.state_dir / "publication-receipts.jsonl").write_text(
-            "".join(json.dumps(receipt) + "\n" for _ in range(20))
+            "".join(json.dumps(receipt) + "\n" for _ in range(100))
         )
         result, extract, fake = self.publish()
 
         self.assertEqual(result[0]["status"], "cap_deferred")
         extract.assert_not_called()
         self.assertEqual(fake.tree_posts + fake.commit_posts + fake.ref_posts + fake.pr_posts, 0)
+
+    def test_limit_accepts_one_hundred_and_rejects_out_of_range(self):
+        self.assertEqual(inspect.signature(publish_repositories).parameters["limit"].default, 20)
+        self.assertEqual(publish_repositories([], self.state_dir, limit=100), [])
+        for invalid in (0, 101):
+            with self.subTest(limit=invalid), self.assertRaises(ValueError):
+                publish_repositories([], self.state_dir, limit=invalid)
+
+    def test_three_synthesis_failures_latch_all_remaining_repositories(self):
+        repos = [f"alice/demo{index}" for index in range(7)]
+        invalid = {"recent_markdown": "", "todo_markdown": "- [ ] x"}
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=invalid) as extract,
+        ):
+            results = publish_repositories(repos, self.state_dir)
+
+        self.assertEqual(extract.call_count, 3)
+        self.assertEqual([item["status"] for item in results[:3]], ["synthesis_failed"] * 3)
+        self.assertEqual([item["status"] for item in results[3:]], ["synthesis_deferred"] * 4)
+
+    def test_ineligible_skip_does_not_reset_synthesis_failure_streak(self):
+        FakeGitHub.no_push_repos = {"skip1", "skip2"}
+        repos = [
+            "alice/fail1",
+            "alice/skip1",
+            "alice/fail2",
+            "alice/skip2",
+            "alice/fail3",
+            "alice/deferred",
+        ]
+        invalid = {"recent_markdown": "", "todo_markdown": "- [ ] x"}
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=invalid) as extract,
+        ):
+            results = publish_repositories(repos, self.state_dir)
+
+        self.assertEqual(extract.call_count, 3)
+        self.assertEqual(
+            [item["status"] for item in results],
+            [
+                "synthesis_failed",
+                "ineligible",
+                "synthesis_failed",
+                "ineligible",
+                "synthesis_failed",
+                "synthesis_deferred",
+            ],
+        )
+
+    def test_successful_synthesis_resets_failure_streak_before_threshold(self):
+        FakeGitHub.context_text = (
+            "# Context\n<!-- janitor:begin:recent -->\nold\n<!-- janitor:end:recent -->\n"
+        )
+        FakeGitHub.todo_text = (
+            "# TODO\n<!-- janitor:begin:todo -->\nold todo\n<!-- janitor:end:todo -->\n"
+        )
+        invalid = {"recent_markdown": "", "todo_markdown": "- [ ] x"}
+        unchanged = {"recent_markdown": "old", "todo_markdown": "old todo"}
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch(
+                "janitor.publisher.extract_structured",
+                side_effect=[invalid, invalid, unchanged, invalid, invalid],
+            ) as extract,
+        ):
+            results = publish_repositories(
+                [f"alice/demo{index}" for index in range(5)], self.state_dir
+            )
+
+        self.assertEqual(extract.call_count, 5)
+        self.assertEqual(
+            [item["status"] for item in results],
+            ["synthesis_failed", "synthesis_failed", "unchanged", "synthesis_failed", "synthesis_failed"],
+        )
+
+    def test_system_exit_during_authenticated_user_lookup_propagates(self):
+        github = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=github),
+            patch.object(github, "api", side_effect=SystemExit(143)),
+            self.assertRaises(SystemExit),
+        ):
+            publish_repositories(["alice/demo"], self.state_dir)
+        self.assertEqual(github.tree_posts + github.commit_posts + github.ref_posts + github.pr_posts, 0)
+
+    def test_keyboard_interrupt_midpublication_propagates_and_stops_later_repos(self):
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            publish_repositories(["alice/demo", "alice/later"], self.state_dir)
+
+        self.assertFalse(any("/repos/alice/later" in path for _method, path, _payload in shared.calls))
+        self.assertEqual(shared.tree_posts + shared.commit_posts + shared.ref_posts + shared.pr_posts, 0)
 
     def test_root_tree_symlink_mode_is_rejected_even_when_contents_looks_like_file(self):
         shared = FakeGitHub()
@@ -479,6 +594,20 @@ class PublisherTestCase(unittest.TestCase):
 
         self.assertEqual(result[0]["status"], "published")
         self.assertEqual(fake.pr_posts, 1)
+
+    def test_existing_executable_document_mode_is_preserved_in_generated_tree(self):
+        shared = FakeGitHub()
+        shared.root_tree[0]["mode"] = "100755"
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=_generated_response()),
+        ):
+            result = publish_repositories(["alice/demo"], self.state_dir)
+
+        self.assertEqual(result[0]["status"], "published")
+        tree_entries = shared.trees[GENERATED_TREE_SHA]["tree"]
+        context_entry = next(item for item in tree_entries if item["path"] == "CONTEXT.md")
+        self.assertEqual(context_entry["mode"], "100755")
 
     def test_docs_only_merge_does_not_change_twenty_non_janitor_commit_sample(self):
         human = [
@@ -537,12 +666,6 @@ class PublisherTestCase(unittest.TestCase):
         self.assertEqual(first[0]["status"], "unchanged")
         self.assertEqual(second[0]["status"], "unchanged_digest")
         self.assertEqual(extract.call_count, 1)
-
-    def test_limit_must_be_between_one_and_twenty(self):
-        for invalid in (0, 21):
-            with self.subTest(limit=invalid), self.assertRaises(ValueError):
-                publish_repositories([], self.state_dir, limit=invalid)
-
 
 class DiscoverGitHubReposTests(unittest.TestCase):
     def test_deduplicates_ssh_https_aliases_and_ignores_other_hosts(self):

@@ -4,7 +4,7 @@ Updated 2026-09-12, 18:06 America/Los_Angeles. Janitor's existing caretaker is a
 
 The final timer-driven run, run_1789261279, covered all 81 targets with zero failures: 47 quiet, 27 unchanged_hash, seven written. The service exited 0 after 4m42s. Both timers are active/enabled: daily 03:00 and Sunday 04:00 Pacific. The temporary acceptance override was removed, and user lingering is enabled.
 
-Branch-table freshness below refers to its saved observation, not the current moment. Preserve unrelated work; the pre-existing test import edit remains uncommitted.
+Branch-table freshness below refers to its saved observation, not the current moment. The pre-existing test import cleanup was verified and published in bb702bd; preserve any new unrelated work.
 
 <!-- janitor:begin:recent -->
 Active focus: routine unattended operation of the accepted caretaker.

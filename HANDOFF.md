@@ -50,6 +50,6 @@ jq -c 'select(.run_id=="run_1789261279")' ~/.local/state/janitor/runs.jsonl
 janitor status --all --json
 ```
 
-The original tests/test_git_ops.py import-order edit remains uncommitted and untouched. The generated branch table was refreshed by the accepted sweep; its original pre-session diff remains in the preservation snapshot.
+The original tests/test_git_ops.py import-order edit was verified (16 focused tests and Ruff) and published in bb702bd during the final push cleanup. The generated branch table was refreshed by the accepted sweep; its original pre-session diff remains in the preservation snapshot.
 
 TODO.md is the canonical scope/status list. Historical implementation plans are completed records, not a queue to replay. Janitor maintains repository documentation and branch reports; it does not implement target projects' TODOs.

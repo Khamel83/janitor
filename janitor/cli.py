@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Optional
 
 from janitor.branch_review import collect_branch_report, render_branch_block
+from janitor.github import discover_github_repos
 from janitor.git_ops import check_preflight_guards, get_repo_status
 from janitor.hygiene import (
     checkpoint_abandoned_wip,
@@ -50,6 +51,8 @@ from janitor.hygiene import (
     purge_ephemeral_trash,
 )
 from janitor.reconciler import overview_repo, sweep_repo
+from janitor.publisher import publish_repositories
+from janitor.reviews import collect_reviews
 from janitor.state import StateManager
 
 DEFAULT_WORKSPACE = Path("/Volumes/2TB_SSD/GitHub")
@@ -302,7 +305,69 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp_status.add_argument("--json", action="store_true", help="emit JSON on stdout")
 
+    sp_publish = subparsers.add_parser(
+        "publish", help="publish bounded documentation proposals as GitHub PRs"
+    )
+    sp_publish.add_argument("repos", nargs="*", type=Path)
+    sp_publish.add_argument("--all", action="store_true")
+    sp_publish.add_argument("--dry-run", action="store_true")
+    sp_publish.add_argument("--limit", type=int, choices=range(1, 101), default=20)
+    sp_publish.add_argument("--json", action="store_true")
+
+    sp_reviews = subparsers.add_parser(
+        "reviews", help="collect morning evidence for all open GitHub PRs"
+    )
+    sp_reviews.add_argument("repos", nargs="*", type=Path)
+    sp_reviews.add_argument("--all", action="store_true")
+    sp_reviews.add_argument("--json", action="store_true")
+
     return parser
+
+
+def _state_root() -> Path:
+    return Path(
+        os.environ.get(STATE_DIR_ENV, str(Path.home() / ".local/state/janitor"))
+    )
+
+
+def _remote_main(args: argparse.Namespace) -> int:
+    """Dispatch GitHub-wide commands before the legacy local-repository loop."""
+    state_dir = _state_root()
+    identities = discover_github_repos(_resolve_targets(args))
+    if args.command == "publish":
+        results = publish_repositories(
+            identities, state_dir, dry_run=args.dry_run, limit=args.limit
+        )
+        failed = any(
+            result.get("status")
+            in {"failed", "invalid_source", "synthesis_failed", "synthesis_deferred"}
+            or bool(result.get("state_error"))
+            for result in results
+        )
+        if args.json:
+            print(
+                json.dumps(
+                    {"schema_version": JSON_SCHEMA_VERSION, "results": results},
+                    indent=2,
+                )
+            )
+        else:
+            for result in results:
+                print(_human_result(result))
+                if result.get("pr_url"):
+                    print(f"  {result['pr_url']}")
+        return 1 if failed else 0
+
+    report = collect_reviews(identities, state_dir)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(
+            f"[{'complete' if report['complete'] else 'incomplete'}] morning review evidence"
+        )
+        for key in ("json", "markdown", "prompt"):
+            print(f"  {key}: {report['artifacts'][key]}")
+    return 0 if report["complete"] else 1
 
 
 def _main(argv: Optional[list[str]] = None) -> int:
@@ -360,7 +425,7 @@ def _main(argv: Optional[list[str]] = None) -> int:
         results.append(result)
         if args.command in {"sweep", "overview", "tidy"} and not getattr(args, "dry_run", False):
             state_mgr.record_run(repo.name, result["status"], run_id,
-                                 failure=str(result.get("raw") or result.get("error") or "unknown")
+                failure=str(result.get("raw") or result.get("error") or "unknown")
                                  if result["status"] in FAILING_STATUSES else None)
             receipt = dict(state_mgr.get_last_run(repo.name), repo=repo.name,
                            command=args.command, elapsed_seconds=round(time.monotonic() - repo_started, 3))
@@ -378,9 +443,40 @@ def _main(argv: Optional[list[str]] = None) -> int:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "reviews":
+        root = _state_root()
+        root.mkdir(parents=True, exist_ok=True)
+        with (root / "reviews.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("[janitor] Another review collection is active.", file=sys.stderr)
+                return 1
+            return _remote_main(args)
+    if args.command == "publish":
+        root = _state_root()
+        root.mkdir(parents=True, exist_ok=True)
+        with (root / "run.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(
+                    "[janitor] Another mutating run is active; not starting a duplicate.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            def stop_publish(signum, frame):
+                raise SystemExit(128 + signum)
+
+            previous = signal.signal(signal.SIGTERM, stop_publish)
+            try:
+                return _remote_main(args)
+            finally:
+                signal.signal(signal.SIGTERM, previous)
     if args.command not in {"sweep", "overview", "tidy"} or getattr(args, "dry_run", False):
         return _main(argv)
-    root = Path(os.environ.get(STATE_DIR_ENV, str(Path.home() / ".local/state/janitor")))
+    root = _state_root()
     root.mkdir(parents=True, exist_ok=True)
     with (root / "run.lock").open("a") as lock:
         try:

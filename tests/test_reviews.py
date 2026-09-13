@@ -311,6 +311,20 @@ class ReviewCollectorTests(unittest.TestCase):
         self.assertFalse(report["complete"])
         self.assertIn("alice/bad", report["briefMarkdown"])
 
+    def test_metadata_failure_is_attributed_to_requested_repository(self):
+        original_api = FakeGitHub.api
+
+        def api(client, path, *args, **kwargs):
+            if path == "/repos/alice/bad":
+                raise GitHubError("metadata unavailable")
+            return original_api(client, path, *args, **kwargs)
+
+        for repos in (["alice/bad", "alice/demo"], ["alice/demo", "alice/bad", "alice/last"]):
+            with self.subTest(repos=repos), patch.object(FakeGitHub, "api", api):
+                report = self.collect(repos)
+                errors = [r for r in report["results"] if r["status"] == "error"]
+                self.assertEqual([r["repo"] for r in errors], ["alice/bad"])
+
     def test_private_atomic_snapshot_preserves_original_context_and_local_references(
         self,
     ):

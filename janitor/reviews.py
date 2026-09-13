@@ -467,11 +467,11 @@ def collect_reviews(repos: list[str], state_dir: Path) -> dict:
         except Exception as exc:
             results.append(
                 {
-                    "repo": repo,
+                    "repo": requested_repo,
                     "status": "error",
                     "error": _safe_error(exc),
                     "pull_requests": [],
-                    "publication": _publication_refs(state_dir, repo),
+                    "publication": _publication_refs(state_dir, requested_repo),
                 }
             )
     complete = all(

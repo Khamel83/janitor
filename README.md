@@ -2,6 +2,10 @@
 
 > Autonomous repository caretaker & living context reconciler for the Homelab fleet.
 
+Operational acceptance is in progress. Start with [TODO.md](TODO.md) for the
+remaining gates and [HANDOFF.md](HANDOFF.md) for run evidence. Implemented
+features below are not a claim that the latest unattended fleet run passed.
+
 Janitor is an opinionated groundskeeper for your software repositories. It runs on a master–worker architecture between Homelab and your Mac mini, ensuring your repositories stay clean, documented, and reconciled against ground truth—without human friction or unsolicited prompt pollution.
 
 ---
@@ -40,8 +44,8 @@ Janitor runs on a dual-cadence master–worker schedule orchestrated by systemd 
 
 | Pass | Cadence | Trigger | What It Does |
 | :--- | :--- | :--- | :--- |
-| **Daily Sweep** | **Nightly at 03:00 UTC** | `janitor-sweep.timer` on Homelab | SSH to Mac mini → runs auto-tidy on stale WIP → reconciles `CONTEXT.md` & `TODO.md` for active repos (fast-paths quiet repos in 0.1s). |
-| **Weekly Overview** | **Sunday at 04:00 UTC** | `janitor-overview.timer` on Homelab | SSH to Mac mini → deep codebase inspection → refreshes `LLM-OVERVIEW.md` and mirrors to central docs. |
+| **Daily Sweep** | **Nightly at 03:00 Pacific** | `janitor-sweep.timer` on Homelab | SSH to Mac mini → runs auto-tidy on stale WIP → reconciles `CONTEXT.md` & `TODO.md` for active repos (quiet fast path). |
+| **Weekly Overview** | **Sunday at 04:00 Pacific** | `janitor-overview.timer` on Homelab | SSH to Mac mini → deep codebase inspection → refreshes `LLM-OVERVIEW.md` and mirrors to central docs. |
 | **On-Demand** | **Anytime via CLI** | Manual `janitor` command | Instant health check, immediate tidy, or targeted repo sweep from your terminal. |
 
 ---
@@ -52,8 +56,8 @@ Janitor runs on a dual-cadence master–worker schedule orchestrated by systemd 
 ┌────────────────────────────────────────────────────────┐
 │               HOMELAB (Master Control Plane)           │
 │  - systemd user timers:                                │
-│      • janitor-sweep.timer (Daily 03:00 UTC)           │
-│      • janitor-overview.timer (Sun 04:00 UTC)          │
+│      • janitor-sweep.timer (Daily 03:00 Pacific)       │
+│      • janitor-overview.timer (Sun 04:00 Pacific)      │
 │  - Triggers Mac mini over private LAN / Tailscale SSH  │
 └───────────────────────────┬────────────────────────────┘
                             │
@@ -111,6 +115,22 @@ janitor sweep --all --json
 ```
 
 ### Branch and worktree review
+
+`branches` is report-only. A real `sweep` also runs Butler: it may purge caches,
+checkpoint stale work, and restore the original checkout. `sweep --dry-run`
+avoids those actions and document/state writes, but can still call the model
+and log usage. Janitor summarizes evidence; it does not implement a target
+repository's TODOs. Keep human priorities outside generated sentinel blocks.
+
+Mutating CLI runs share a local lock. Gateway2000 calls disable coding tools,
+skill/rule discovery, and session saving; Janitor supplies all synthesis inputs.
+Each call has a 180-second process-group timeout. Fleet runs stop after three
+failed syntheses without an intervening successful synthesis, and stop starting
+repositories after 45 minutes for sweeps or three hours for overviews
+(`JANITOR_RUN_TIMEOUT` overrides seconds). Quiet repositories do not clear a
+provider failure streak. Deferred targets are reported as errors, not success.
+Sanitized per-target receipts append to `~/.local/state/janitor/runs.jsonl`
+as targets finish; full JSON output remains available at command completion.
 
 `janitor branches` inventories local branch refs, cached remote-tracking refs,
 and linked worktrees. Matching local and remote refs appear as one logical

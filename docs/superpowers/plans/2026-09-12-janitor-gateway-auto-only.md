@@ -4,6 +4,13 @@
 
 **Goal:** Make every live Janitor model request use Gateway2000 auto and never select g2k-bg, then deploy and rerun the missed fleet sweep.
 
+**Status, 2026-09-12 regroup:** Tasks 1–3 and Task 4 steps 1–3 were completed
+according to HANDOFF.md (commits 79c45ba, 8c0d8ad, ca861d8; 161 tests and a
+bounded auto probe). Task 4 fleet acceptance failed/interrupted. Historical
+step checkboxes below are retained as the original procedure, not open work.
+The canonical remaining checklist is now root TODO.md. Do not repeat the
+red-test setup or launch another fleet sweep before the bounded diagnosis gate.
+
 **Architecture:** The Mac mini worker invokes the g2k shell function from the sourced Gateway2000 helper through zsh -lc, streaming the full prompt through stdin. The existing OpenRouter free HTTP path remains only for machines without a Gateway2000 auto helper.
 
 **Tech Stack:** Python 3.10+, subprocess, pathlib, zsh, Gateway2000 OMP helper, unittest/pytest, Ruff, systemd user services over SSH.

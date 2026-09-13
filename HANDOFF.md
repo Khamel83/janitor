@@ -4,6 +4,18 @@ Updated: 2026-09-12 17:26 America/Los_Angeles.
 
 ## Read this first
 
+Regroup addendum, 2026-09-12: `TODO.md` is now the canonical ordered completion
+checklist. Use `WORKER-PROMPT.md` to start the implementation/acceptance run.
+This handoff retains historical evidence; scheduler and process claims below
+describe the interrupted run's aftermath and must be checked live.
+
+Scope is settled: complete the existing caretaker, including one targeted
+overview acceptance. No new product features or Gateway2000 budget work.
+The worker should progress through diagnosis, the smallest supported fix,
+verification, deployment, supervised fleet acceptance, and publication.
+Temporarily pause timers during recovery, then restore after acceptance.
+An actual scheduled sweep is a separate final gate.
+
 Janitor is paused after an interrupted fleet verification run. The
 Gateway2000 auto-only source change is implemented, locally tested, and
 installed on the path used by the Mac mini worker. It is **not yet accepted
@@ -118,11 +130,26 @@ Next session:
 
 ## Working-tree preservation
 
-The current local branch is `main` at `ca861d8`, 23 commits ahead of
-`origin/main`. It has not been pushed. Preserve these pre-existing unstaged
+At regroup inspection, local `main` was `b7f0599`, 24 commits ahead of the
+cached `origin/main`, including this handoff's original commit. Re-read Git
+state rather than treating these numbers as current. Preserve these pre-existing unstaged
 edits; they are not part of the auto-only change:
 
 - `CONTEXT.md` — existing generated branch-review update.
 - `tests/test_git_ops.py` — existing import-order edit.
 
 Do not reset, clean, or discard them.
+
+The regroup documentation edits intentionally update the recent section of
+`CONTEXT.md` while preserving its existing branch block byte-for-byte. The
+worker must distinguish these authorized documentation edits from the
+pre-existing branch-table and test edits when staging.
+
+## Operational boundaries for acceptance
+
+- `branches` is report-only; fetch can prune remote-tracking refs, never local branches.
+- A real `sweep` includes Butler cleanup/checkpointing before synthesis. It is not a read-only diagnostic. Inspect target state first and protect pre-existing work. Use dry-run or isolated fixtures for initial diagnosis; dry-run may still invoke the model and write usage telemetry.
+- `overview` writes the architectural overview and central mirror, but does not auto-commit.
+- Ordinary sweep synthesis consumes recent git evidence and current CONTEXT/TODO, not this handoff as an independent input. Keep durable operator priorities outside generated blocks.
+- Failure text currently exists in returned results but is not retained by `record_run`; preserve sanitized actionable evidence, not raw private prompts or secrets.
+- A simple auto reply, passing tests, a service exit code, and durable repository outcomes prove different things. Do not substitute one for another.

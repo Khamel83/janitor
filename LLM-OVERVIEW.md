@@ -1,5 +1,5 @@
 # LLM-OVERVIEW — janitor
-> Current compressed briefing. Updated 2026-09-11. Agent behavior is defined in `AGENTS.md`. This derived file is not an independent authority.
+> Current compressed briefing. Updated 2026-09-12. Read TODO.md for remaining acceptance gates and HANDOFF.md for operational evidence. This derived file is not an independent authority.
 
 ## What this repo is
 Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using the sourced Gateway2000 `g2k` auto function, with the OpenRouter free-model fallback used only when no Gateway2000 auto helper is available.
@@ -47,7 +47,7 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Ephemeral trash purge (`purge_ephemeral_trash`): cleans `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.DS_Store`, `Thumbs.db`, `.pyc`, `.swp`.
   - Secret path guarding: pathspec pattern exclusions (`.env*`, `id_rsa*`, `*.pem`, `*.key`, `*credential*`) prevent secret staging across directory depths.
   - WIP staleness check (`is_wip_stale`) & zero-data-loss checkpointing (`checkpoint_abandoned_wip`): commits uncommitted work older than 6 hours to `auto-wip/<timestamp>` branches and resets working tree to pre-existing local HEAD (never origin/main).
-  - WIP branch expiration (`prune_expired_wip_branches`): prunes local `auto-wip/*` branches older than 30 days.
+  - WIP branch expiration helper (`prune_expired_wip_branches`) exists but is not called by the current CLI/sweep. Automatic local branch pruning is outside the completion scope.
 - **`janitor.state` (Persistent State Layer)**:
   - `StateManager` rooted at `~/.local/state/janitor/state.json` (overridden via `JANITOR_STATE_DIR`).
   - Normalizes task text to stable `tk_<hash>` IDs.
@@ -67,5 +67,5 @@ The system operates under strict safety invariants: preflight git guards skip re
 - `janitor branches [repo ...] [--all] [--json] [--no-fetch]`: Review local/remote-tracking branches and linked worktrees without branch actions.
 - `janitor tidy [--all]`: Purge cache droppings and checkpoint abandoned WIP to `auto-wip/` branches.
 - `janitor overview [--all]`: Synthesize deep architectural map and mirror to `/Volumes/2TB_SSD/GitHub/docs/repos/`.
-- `PYTHONPATH=. pytest -q`: Full offline unit test suite (159 tests).
+- `PYTHONPATH=. pytest -q`: Full offline unit test suite (last handoff recorded 161 passed; rerun for current evidence).
 - `systemctl --user list-timers | grep janitor`: Inspect active Homelab timers (on `ssh homelab`).

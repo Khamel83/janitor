@@ -3,6 +3,12 @@
 **Date:** 2026-09-12  
 **Status:** Approved for implementation
 
+**2026-09-12 recovery clarification:** The client call now disables tools,
+skills/rules, title generation, LSP, and session persistence, with a synthesis
+system prompt. Routing remains the sourced auto helper. Janitor owns the
+180-second process-group deadline and sanitized failure receipts; it does not
+configure Gateway2000 providers. Root TODO.md is the current acceptance list.
+
 ## Decision
 
 Janitor uses Gateway2000's `auto` lane for every live model request, including
@@ -46,7 +52,8 @@ share this one backend policy.
 - A successful auto completion proceeds through the existing validation and
   document commit gates.
 - A Gateway2000 auto failure remains `synthesis_failed` with the provider error
-  preserved in the run output and durable state.
+  represented by sanitized category/exit-code/digest evidence in durable state;
+  raw failure details remain in returned run output, not persisted receipts.
 - Janitor does not fall back from auto to background, and does not choose a
   provider or model itself.
 - The OpenRouter path is used only when no Gateway2000 auto client is present,

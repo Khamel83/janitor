@@ -1,5 +1,18 @@
+# Current operator context
+
+Updated 2026-09-12. Finish operational acceptance of the existing caretaker.
+`TODO.md` is the canonical completion checklist; `HANDOFF.md` holds the last
+run evidence; `WORKER-PROMPT.md` is the fresh-session entry point.
+
+The auto-only worker source and repaired service transport are implemented.
+The last recorded fleet attempt was interrupted after 20 quiet and 25
+synthesis_failed outcomes, with no document writes. The cause remains open.
+Do not rerun the fleet before one real prompt and one repository pass.
+Live scheduler/process state must be rechecked; this document is not a live
+health report. Branch-table freshness below is from its saved observation.
+
 <!-- janitor:begin:recent -->
-Active focus is local integration and documentation of Janitor's branch and linked-worktree review. The feature is implemented on local `main`; remote publication and deployment remain separate operations.
+Active focus is resolving real synthesis failures and completing bounded operational acceptance. Branch/worktree review and Gateway2000 auto routing are implemented.
 
 ### Verified Accomplishments
 - Refactored `sweep_repo` to integrate the Butler auto-tidy pre-pass (purging cache litter and checkpointing stale WIP before sweeping), deleted dead `janitor/docs.py` (700+ lines removed), and confirmed 90/90 tests pass (`0f2bf86`).
@@ -14,7 +27,7 @@ Active focus is local integration and documentation of Janitor's branch and link
 - Branch review inventories local refs, cached remote-tracking refs, and linked worktrees; compares branches with the discovered default branch; and reports bounded evidence without checkout, merge, deletion, reset, push, or local-branch pruning.
 - Updated `README.md`, `LLM-OVERVIEW.md`, and `TODO.md`; verified `PYTHONPATH=. pytest -q` with 159 passing tests and `ruff check janitor tests`.
 
-The local merge has not been pushed or deployed. An unstaged `tests/test_git_ops.py` edit that existed before the merge was preserved in the working tree. Homelab timer and service configuration remains documented under `systemd/`.
+Gateway2000 auto routing and repaired transport are installed on the runner path according to the 2026-09-12 handoff; fleet acceptance remains incomplete. Last recorded offline verification was 161 passed plus Ruff. These are historical results, not a fresh verification. Local publication remains pending. Preserve the pre-existing `tests/test_git_ops.py` edit and saved branch block. Homelab units are under `systemd/`.
 <!-- janitor:end:recent -->
 
 <!-- janitor:begin:branches -->

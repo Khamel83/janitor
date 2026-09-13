@@ -105,6 +105,15 @@ class GatewayStreamingTestCase(unittest.TestCase):
         result = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='], capture_output=True, text=True)
         self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith('Z'))
 
+    def test_usage_logging_outside_repo_uses_created_state_directory(self):
+        state = self.tmp / "state"
+        with patch("janitor.worker.os.getcwd", return_value=str(self.tmp)), patch.dict(
+            os.environ, {"JANITOR_STATE_DIR": str(state)}
+        ):
+            worker._log_usage(AUTO_LABEL)
+        entries = (state / "usage.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(entries[0])["model"], AUTO_LABEL)
+
     def test_gateway_command_sources_auto_helper_without_background_lookup(self):
         helper = self.tmp / "gateway2000.zsh"
         helper.write_text("g2k() { :; }\n")

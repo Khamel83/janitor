@@ -66,7 +66,11 @@ def _usage_log_path() -> Path:
             d = parent / ".janitor"
             d.mkdir(exist_ok=True)
             return d / "usage.jsonl"
-    return Path(".janitor/usage.jsonl")
+    # The SSH/systemd runner can start outside any repository. Its usage log
+    # must not depend on an uncreated relative .janitor directory.
+    state_dir = Path(os.environ.get("JANITOR_STATE_DIR", str(Path.home() / ".local/state/janitor")))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "usage.jsonl"
 
 
 _rate_cache: dict = {"minute_count": 0, "day_count": 0, "cached_at": 0}

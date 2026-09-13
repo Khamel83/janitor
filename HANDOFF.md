@@ -1,8 +1,40 @@
 # Janitor handoff
 
-Updated: 2026-09-12 17:26 America/Los_Angeles.
+Updated: 2026-09-12 recovery session (America/Los_Angeles).
 
-## Read this first
+## Current recovery result
+
+The earlier fleet failure is now reproduced and identified: the SSH runner
+starts outside a repository, and `_usage_log_path()` returned the uncreated
+relative `.janitor/usage.jsonl`. Logging after a successful model completion
+raised FileNotFoundError and converted it to synthesis_failed. This is a
+Janitor filesystem-path defect, not evidence of Gateway2000 capacity failure.
+
+Fixed the fallback to create/use JANITOR_STATE_DIR (or ~/.local/state/janitor).
+A real SSH runner sweep from /private/tmp then passed for MacMiniM4 in 4.825s,
+run_1789260450, with written output and no raw error. A regression test covers
+logging outside a repository.
+
+Additional accepted protections: synthesis-only auto client, process-group
+timeout cleanup, mutating-run lock, per-target sanitized runs.jsonl receipts,
+and bounded fleet failure/deadline handling. Source protection commit 902fa8e
+and regroup documentation b21e116 were pushed. The logging fix and final fleet
+acceptance are being completed; consult TODO.md before claiming completion.
+
+Targeted argus-ops sweep run_1789260157 wrote drafts; unchanged repeat made
+zero model calls and preserved documents. Overview run_1789260233 wrote and
+mirrored successfully; both copies hashed
+cd84e6edf089cfe059e19b2fd9ca972cbc59733cd3192e36173c003264b4ed02.
+Its repository HEAD stayed 232bd42 (overview did not commit).
+
+Accelerated timer acceptance run_1789260375 reproduced the logging bug and
+stopped after three synthesis failures, with four quiet and 73 deferred/error
+outcomes. The runtime-only timer override was removed; both recurring timers
+are paused until the corrected acceptance run. Sanitized receipts are in
+~/.local/state/janitor/runs.jsonl. Pre-fleet state and original dirty-file
+patch are saved locally under .janitor/ (ignored, not committed).
+
+## Historical interrupted-run snapshot (superseded by current result)
 
 Regroup addendum, 2026-09-12: `TODO.md` is now the canonical ordered completion
 checklist. Use `WORKER-PROMPT.md` to start the implementation/acceptance run.

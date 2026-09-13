@@ -1,56 +1,36 @@
-# Janitor completion checklist
+# Janitor status and scope
 
-Updated 2026-09-12. This human-maintained section is the canonical remaining
-work. Keep it outside Janitor's generated sentinel. Read `HANDOFF.md` for
-the last run evidence and `WORKER-PROMPT.md` for execution instructions.
+Updated 2026-09-12. Existing caretaker is accepted and scheduled. See [HANDOFF.md](HANDOFF.md) for evidence and recheck commands. This human-maintained status is outside the generated sentinel.
 
-## Required to finish
+## Completed acceptance
 
-- [ ] Inspect live sweep/overview timers, services, Mac worker processes, source path, and durable state. Temporarily pause relevant timers during diagnosis to prevent overlapping runs; record prior state.
-- [ ] Reproduce one real synthesis failure with one representative repository prompt and an explicit wall-clock deadline. Capture sanitized stderr/exit, elapsed time, prompt size, and response-validation result locally. Do not repeat a full-fleet probe or infer the cause from the old background-lane incident.
-- [ ] Fix the demonstrated cause with focused regression coverage. Preserve Gateway2000 auto routing. Ensure failures retain useful sanitized durable evidence and timeout/cancellation does not leave the worker's own descendants running. Reuse existing mechanisms; no new orchestration platform.
-- [ ] Accept one targeted sweep: valid structured output, correct sentinel preservation and commit/draft behavior, durable outcome, and an unchanged repeat that makes no unnecessary model request. Use an isolated fixture for destructive Butler cases; preserve live pre-existing work.
-- [ ] Accept one targeted overview through the same backend: required sections, intended output and mirror, no automatic commit. Do not regenerate all fleet overviews merely to test routing.
-- [ ] Run the full offline suite, Ruff, and whitespace checks once after the final relevant changes. Verify the installed runner uses the intended source.
-- [ ] Complete one supervised fleet sweep through the real Homelab service. Discover the current target set, account for every target by run ID, explain legitimate skips, and resolve synthesis/execution failures. Save sanitized evidence incrementally. Choose and record a finite wall-clock deadline before starting; stop on a repeated systemic failure rather than retrying the fleet unchanged.
-- [ ] Restore the intended Pacific timers after acceptance and verify their effective units, next trigger, and an actual scheduled sweep's durable outcomes. If the scheduled run has not occurred, report that gate as pending rather than claiming unattended acceptance.
-- [ ] Refresh HANDOFF/CONTEXT/overview and this checklist with exact evidence, commit scoped changes, push the intended branch, and verify local/remote/runtime revision identity. Preserve unrelated edits; do not blanket-stage them.
+- [x] Diagnose the real SSH/non-repository failure and fix usage-log directory creation.
+- [x] Keep Gateway2000 auto; constrain calls to bounded synthesis with low reasoning and no coding tools.
+- [x] Verify process-group timeout cleanup, mutating-run exclusion, durable failure receipts, and bounded fleet failure handling.
+- [x] Accept a real sweep, correct draft behavior, and a zero-model-call unchanged repeat.
+- [x] Accept overview generation and conditional central mirroring; preserve dirty-docs and no-auto-commit gates.
+- [x] Pass 166 offline tests, Ruff, whitespace checks, and deployed systemd unit validation.
+- [x] Accept the real timer → Homelab service → SSH worker → fleet flow: run_1789261279, 81 targets, zero failures, service exit 0.
+- [x] Restore enabled daily 03:00 and Sunday 04:00 America/Los_Angeles schedules; verify next triggers and user lingering.
+- [x] Publish scoped source and reconciled operator documentation; retain pre-existing work.
 
-## Completion boundary
+No required implementation remains for this scope. Future runtime failures are maintenance work, not evidence that the historical implementation plans should be restarted.
 
-Finish the existing caretaker: status, safe Butler tidy/checkpointing,
-deterministic branch/worktree reports, nightly CONTEXT/TODO reconciliation,
-and weekly architectural overview/mirroring. Janitor summarizes repository
-evidence; it does not implement projects' TODOs, certify semantic truth of
-model text, or automatically resolve branch divergence.
+## Capability boundary
 
-No new reminders, Herdr integration, branch merge/deletion automation,
-provider configuration changes, or budget subsystem. Gateway2000 owns model
-routing; efficient execution here means bounded probes, quiet-path reuse,
-and no repeated failing fleet runs.
+Janitor provides status, Butler cache cleanup and stale-WIP checkpointing, deterministic branch/worktree reports, nightly CONTEXT/TODO reconciliation, and weekly architectural overview/mirroring.
 
-## Historical completed implementation
+A real sweep includes Butler and can checkpoint stale work and restore its checkout. Branch review itself is report-only. Documentation commits obey the existing clean-default-branch gate; otherwise results remain drafts. Overview never auto-commits, and central mirroring can defer while the docs repository is dirty.
 
-The following generated list is implementation history, not operational acceptance.
+Janitor summarizes repository evidence. It does not implement projects' TODOs, certify the semantic truth of model prose, resolve branch divergence, or automatically merge/delete branches. Gateway2000 owns provider selection. No budget subsystem is part of this work.
+
+## Deferred roadmap (not a completion blocker)
+
+- [ ] Morning/next-login branch-attention reminders, only if separately requested.
+- Herdr and unrelated integrations remain out of scope.
 
 <!-- janitor:begin:todo -->
-- [x] Design spec and implementation plan (`8058a4b`, `36a13d1`)
-- [x] Package scaffolding & preflight guards in `git_ops.py` (`4c205c2`)
-- [x] Persistent state layer & task ID manager in `state.py` (`3df61ef`)
-- [x] Auto-tidy engine & WIP branch checkpointer in `hygiene.py` (`aef3665`)
-- [x] Model worker with stdin payload streaming in `worker.py` (`8d52783`)
-- [x] Living documentation reconciler & bootstrap in `reconciler.py` (`b234fd7`)
-- [x] CLI interface with fleet discovery & JSON output in `cli.py` (`b77d640`)
-- [x] Homelab systemd units & Mac Mini SSH runner script (`a04c03a`)
-- [x] Add `.gitignore` and untrack pycache / egg-info (`ec95539`)
-- [x] Fix timestamp formatting in `git_ops.py` to keep input hash deterministic (`3295676`)
-- [x] Run end-to-end unit test suite verification (90/90 passing)
-- [x] Verify local editable package installation (`pip install -e .`)
-- [x] Perform live dry-run and real sweep against `janitor` repository
-- [x] Perform live overview synthesis against external fleet target (`maya`)
-- [x] Adjust systemd timer to 3:00 AM America/Los_Angeles on Homelab
-- [x] Archive legacy Mintlify starter files in `docs` repo and populate 80 fleet overviews in `docs/repos/`
-- [x] Integrate Butler auto-tidy pre-pass into `sweep_repo` and remove dead `docs.py` code (`0f2bf86`)
-- [x] Add deterministic report-only branch/worktree review to CLI and nightly sweep (`780767a`)
-- [ ] Add morning/next-login reminders for branch attention (roadmap; v1 remains report-only)
+- [x] Existing caretaker implementation and branch/worktree review.
+- [x] Gateway2000 auto routing and SSH usage-log recovery.
+- [x] Targeted and fleet operational acceptance; schedules restored.
 <!-- janitor:end:todo -->

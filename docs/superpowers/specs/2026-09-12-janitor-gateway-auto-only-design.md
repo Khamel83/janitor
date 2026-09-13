@@ -5,7 +5,7 @@
 
 **2026-09-12 recovery clarification:** The client call now disables tools,
 skills/rules, title generation, LSP, and session persistence, with a synthesis
-system prompt. Routing remains the sourced auto helper. Janitor owns the
+system prompt and low reasoning. Routing remains the sourced auto helper. Janitor owns the
 180-second process-group deadline and sanitized failure receipts; it does not
 configure Gateway2000 providers. Root TODO.md is the current acceptance list.
 
@@ -40,8 +40,8 @@ On the Mac mini, the worker invokes the `g2k` shell function from the sourced
 Gateway2000 helper (`~/.config/gateway2000/gateway2000.zsh`) and streams the
 complete prompt through stdin. This makes the selected lane explicit and
 avoids the misleading executable symlink. Where the helper is unavailable,
-the worker may use a genuine `g2k` executable if present; it must never search
-for or invoke `g2k-bg`.
+the worker uses the existing OpenRouter free HTTP path; it does not search
+for a PATH `g2k` executable or invoke `g2k-bg`.
 
 The worker keeps the existing prompt-size, timeout, usage logging, structured
 response parsing, and rate-limit behavior. `sweep` and `overview` continue to

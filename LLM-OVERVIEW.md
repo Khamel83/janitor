@@ -1,5 +1,5 @@
 # LLM-OVERVIEW — janitor
-> Current compressed briefing. Updated 2026-09-12. Read TODO.md for remaining acceptance gates and HANDOFF.md for operational evidence. This derived file is not an independent authority.
+> Current compressed briefing. Updated 2026-09-12. Existing caretaker accepted: final timer-driven sweep covered 81 targets with zero failures; schedules active/enabled. Read TODO.md for scope and HANDOFF.md for operational evidence. This derived file is not an independent authority.
 
 ## What this repo is
 Janitor is an autonomous repository caretaker and living-documentation reconciler providing automated maintenance across the Homelab fleet. It monitors git repositories across single targets or fleet workspaces, purges ephemeral build/editor cache trash, checkpoints abandoned work-in-progress (WIP) branches without secret leakage, reviews branch and linked-worktree sprawl, and auto-synthesizes living documentation files (`CONTEXT.md`, `TODO.md`, `LLM-OVERVIEW.md`) using the sourced Gateway2000 `g2k` auto function, with the OpenRouter free-model fallback used only when no Gateway2000 auto helper is available.
@@ -13,7 +13,7 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Triggers the Mac mini execution worker remotely over private LAN/Tailscale SSH with `BatchMode=yes` and timeout bounds.
 - **Mac Mini Host (`macmini`, macOS Darwin arm64)**:
   - Worker execution node and primary repository storage host.
-  - Workspace: `/Volumes/2TB_SSD/GitHub/*` (80 git repositories).
+  - Workspace: `/Volumes/2TB_SSD/GitHub/*` (81 targets discovered at 2026-09-12 acceptance; discover live rather than assuming a fixed count).
   - Central docs hub: `/Volumes/2TB_SSD/GitHub/docs/repos/` (mirrored fleet overviews).
   - Local CLI: `janitor` (`/opt/homebrew/bin/janitor`) and runner wrapper `scripts/janitor-runner.sh` (`/Users/macmini/.local/bin/janitor-runner`).
   - Model gateway: sourced Gateway2000 `g2k` auto function (streaming via stdin `-p -`); OpenRouter free models are used only when no Gateway2000 auto helper is available.
@@ -23,7 +23,8 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Command line parser and runner supporting subcommands: `sweep`, `branches`, `overview`, `tidy`, and `status`.
   - Discovers child repositories directly under `JANITOR_WORKSPACE` (defaults to `/Volumes/2TB_SSD/GitHub`).
   - Supports `--all` (fleet mode), explicit repo paths, `--dry-run` (prints merged/synthesized previews without writing or committing), `--no-fetch` (use cached remote-tracking refs), and `--json` (structured output).
-  - Handles per-repo execution failures gracefully so single-repo errors do not abort fleet runs. Exits 1 on synthesis or execution errors.
+  - Records sanitized per-target receipts incrementally in `runs.jsonl` under the state directory. Mutating runs share a local lock. One failure does not abort the fleet; three failed syntheses without an intervening successful synthesis stop new work. Quiet targets do not reset the failure streak. Exits 1 for failed/deferred targets.
+  - Stops starting targets after 45 minutes for sweeps or three hours for overviews; `JANITOR_RUN_TIMEOUT` overrides seconds. SIGTERM unwinds the active owned model process group.
 - **`janitor.branch_review` (Deterministic branch/worktree review)**:
   - `collect_branch_report` performs one bounded primary-remote refresh unless fetch is disabled, then inventories local refs, cached remote-tracking refs, and linked worktrees without checking anything out.
   - Groups matching local and remote refs into logical branches, compares each usable tip with the discovered default branch, and classifies branches as active, aging, stale, or abandoned `auto-wip`.
@@ -54,18 +55,18 @@ The system operates under strict safety invariants: preflight git guards skip re
   - Tracks per-repo input hashes (`last_hash`), execution history (`last_run`), WIP branch records (`wip_branches`), branch continuity, and 90-day missing-branch tombstones.
 - **`janitor.worker` (Model Gateway Backend)**:
   - Model dispatching via `call_free` and `extract_structured`.
-  - Streams prompts over stdin to the sourced Gateway2000 `g2k` auto function (`g2k -p -`) to prevent system `ARG_MAX` limits.
+  - Streams prompts over stdin to sourced Gateway2000 auto. Disables coding tools, skills/rules, LSP, title generation, and session persistence; supplies a synthesis-only system prompt with low reasoning. The 180-second timeout kills the owned shell/client process group.
   - Falls back to the `openrouter/free` HTTP API only when no Gateway2000 auto helper is available (requires `OPENROUTER_API_KEY`) with 3 retry attempts.
-  - Enforces rate limits (1000/day, 20/min) logged in `.janitor/usage.jsonl`.
+  - Tracks request counts in repository `.janitor/usage.jsonl`, or a created state-directory `usage.jsonl` when the SSH worker starts outside a repository. The latter fixes the verified fleet logging failure.
 - **System & Automation Infrastructure**:
   - Systemd timer and service units (`systemd/janitor-sweep.timer`, `systemd/janitor-sweep.service`, `systemd/janitor-overview.timer`, `systemd/janitor-overview.service`).
   - Execution runner wrapper (`scripts/janitor-runner.sh`).
 
 ## Canonical entry points
-- `janitor status --all`: Instant health check across all 80 fleet repositories.
+- `janitor status --all`: Git status and last-run records across discovered fleet repositories; this is not downstream acceptance by itself.
 - `janitor sweep [--all]`: Reconcile living documentation (`CONTEXT.md`, `TODO.md`) with auto-tidy pre-pass.
 - `janitor branches [repo ...] [--all] [--json] [--no-fetch]`: Review local/remote-tracking branches and linked worktrees without branch actions.
 - `janitor tidy [--all]`: Purge cache droppings and checkpoint abandoned WIP to `auto-wip/` branches.
 - `janitor overview [--all]`: Synthesize deep architectural map and mirror to `/Volumes/2TB_SSD/GitHub/docs/repos/`.
-- `PYTHONPATH=. pytest -q`: Full offline unit test suite (last handoff recorded 161 passed; rerun for current evidence).
+- `PYTHONPATH=. pytest -q`: Full offline unit test suite (166 passed in the 2026-09-12 recovery session).
 - `systemctl --user list-timers | grep janitor`: Inspect active Homelab timers (on `ssh homelab`).

@@ -2,9 +2,10 @@
 
 > Autonomous repository caretaker & living context reconciler for the Homelab fleet.
 
-Operational acceptance is in progress. Start with [TODO.md](TODO.md) for the
-remaining gates and [HANDOFF.md](HANDOFF.md) for run evidence. Implemented
-features below are not a claim that the latest unattended fleet run passed.
+Operational acceptance passed on 2026-09-12: 81 targets, zero failures, service
+exit 0 through the real timer/SSH worker flow. Both Pacific schedules are active
+and enabled. See [TODO.md](TODO.md) for scope and [HANDOFF.md](HANDOFF.md) for
+receipts, preservation notes, and recheck commands.
 
 Janitor is an opinionated groundskeeper for your software repositories. It runs on a master–worker architecture between Homelab and your Mac mini, ensuring your repositories stay clean, documented, and reconciled against ground truth—without human friction or unsolicited prompt pollution.
 
@@ -123,7 +124,8 @@ and log usage. Janitor summarizes evidence; it does not implement a target
 repository's TODOs. Keep human priorities outside generated sentinel blocks.
 
 Mutating CLI runs share a local lock. Gateway2000 calls disable coding tools,
-skill/rule discovery, and session saving; Janitor supplies all synthesis inputs.
+skill/rule discovery, and session saving; Janitor supplies all synthesis inputs
+and requests low reasoning for this bounded documentation task.
 Each call has a 180-second process-group timeout. Fleet runs stop after three
 failed syntheses without an intervening successful synthesis, and stop starting
 repositories after 45 minutes for sweeps or three hours for overviews
@@ -131,6 +133,9 @@ repositories after 45 minutes for sweeps or three hours for overviews
 provider failure streak. Deferred targets are reported as errors, not success.
 Sanitized per-target receipts append to `~/.local/state/janitor/runs.jsonl`
 as targets finish; full JSON output remains available at command completion.
+Scheduled services use concise human output to avoid journal burst truncation;
+the per-target JSONL receipts are the durable machine-readable record. Use
+`--json` interactively when the full branch report is needed.
 
 `janitor branches` inventories local branch refs, cached remote-tracking refs,
 and linked worktrees. Matching local and remote refs appear as one logical

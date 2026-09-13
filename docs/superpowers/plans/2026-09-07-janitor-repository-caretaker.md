@@ -1,6 +1,6 @@
 # Janitor Repository Caretaker Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Archived completed procedure (2026-09-12):** The caretaker is implemented, published, deployed, and accepted through the real timer-driven fleet flow. Root TODO.md is the current scope/status authority; HANDOFF.md contains receipts. The historical architecture and commands below describe the original implementation and may be superseded by current source. Do not execute this plan again.
 
 **Goal:** Rebuild `janitor` into an autonomous, fault-tolerant repository caretaker and living context reconciler running across homelab repositories (`/Volumes/2TB_SSD/GitHub/*`), controlled by Homelab via systemd timers over SSH.
 
@@ -36,7 +36,7 @@
   - `has_24h_activity(repo_dir: Path) -> tuple[bool, str, str]` (excludes Janitor-Run trailer)
   - `atomic_stage_and_commit(repo_dir: Path, files: list[str], message: str, run_id: str) -> bool`
 
-- [ ] **Step 1: Write failing test for preflight guards and git operations**
+- **Step 1: Write failing test for preflight guards and git operations**
 
 Write `tests/test_git_ops.py`:
 ```python
@@ -109,12 +109,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests/test_git_ops.py`
 Expected: FAIL (`ModuleNotFoundError: No module named 'janitor.git_ops'`)
 
-- [ ] **Step 3: Implement `janitor/git_ops.py` and clean legacy files**
+- **Step 3: Implement `janitor/git_ops.py` and clean legacy files**
 
 Create `janitor/git_ops.py`:
 ```python
@@ -198,12 +198,12 @@ Remove legacy files:
 rm -f janitor/recorder.py janitor/jobs.py hooks/record.sh hooks/context.sh hooks/session-end.sh scripts/cron.sh setup.sh
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests/test_git_ops.py`
 Expected: PASS (5 tests passing)
 
-- [ ] **Step 5: Commit Task 1**
+- **Step 5: Commit Task 1**
 
 ```bash
 git add janitor/git_ops.py tests/test_git_ops.py pyproject.toml
@@ -230,7 +230,7 @@ git commit -m "feat(janitor): add git_ops with preflight guards, atomic commit a
   - `track_wip_branch(repo_name: str, branch_name: str, sha: str)`
   - `get_expired_wip_branches(repo_name: str, max_age_days: int = 30) -> list[str]`
 
-- [ ] **Step 1: Write failing test for state management**
+- **Step 1: Write failing test for state management**
 
 Write `tests/test_state.py`:
 ```python
@@ -268,12 +268,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests/test_state.py`
 Expected: FAIL (`ModuleNotFoundError: No module named 'janitor.state'`)
 
-- [ ] **Step 3: Implement `janitor/state.py`**
+- **Step 3: Implement `janitor/state.py`**
 
 Create `janitor/state.py`:
 ```python
@@ -354,12 +354,12 @@ class StateManager:
         return expired
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- **Step 4: Run test to verify it passes**
 
 Run: `python3 -m unittest tests/test_state.py`
 Expected: PASS (3 tests passing)
 
-- [ ] **Step 5: Commit Task 2**
+- **Step 5: Commit Task 2**
 
 ```bash
 git add janitor/state.py tests/test_state.py
@@ -382,7 +382,7 @@ git commit -m "feat(janitor): add persistent state layer and stable task ID mana
   - `checkpoint_abandoned_wip(repo_dir: Path, state_mgr: StateManager, run_id: str) -> Optional[dict]`
   - `prune_expired_wip_branches(repo_dir: Path, state_mgr: StateManager, max_age_days: int = 30) -> list[str]`
 
-- [ ] **Step 1: Write failing test for auto-tidy and WIP checkpointing**
+- **Step 1: Write failing test for auto-tidy and WIP checkpointing**
 
 Write `tests/test_hygiene.py`:
 ```python
@@ -449,12 +449,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests/test_hygiene.py`
 Expected: FAIL (`ModuleNotFoundError: No module named 'janitor.hygiene'`)
 
-- [ ] **Step 3: Implement `janitor/hygiene.py`**
+- **Step 3: Implement `janitor/hygiene.py`**
 
 Create `janitor/hygiene.py`:
 ```python
@@ -573,12 +573,12 @@ def prune_expired_wip_branches(repo_dir: Path, state_mgr: StateManager, max_age_
     return pruned
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests/test_hygiene.py`
 Expected: PASS (2 tests passing)
 
-- [ ] **Step 5: Commit Task 3**
+- **Step 5: Commit Task 3**
 
 ```bash
 git add janitor/hygiene.py tests/test_hygiene.py
@@ -599,7 +599,7 @@ git commit -m "feat(janitor): add butler auto-tidy trash purge and zero-data-los
   - `call_free(prompt: str, system: Optional[str] = None, timeout: int = 180) -> str`
   - `extract_structured(prompt: str, system: Optional[str] = None, schema_hint: Optional[str] = None, timeout: int = 180) -> dict`
 
-- [ ] **Step 1: Write failing test for stdin streaming and schema extraction**
+- **Step 1: Write failing test for stdin streaming and schema extraction**
 
 Update `tests/test_worker.py`:
 ```python
@@ -635,12 +635,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it passes or fails**
+- **Step 2: Run test to verify it passes or fails**
 
 Run: `python3 -m unittest tests/test_worker.py`
 Expected: FAIL or mismatch on stdin flag
 
-- [ ] **Step 3: Update `janitor/worker.py` to stream over stdin**
+- **Step 3: Update `janitor/worker.py` to stream over stdin**
 
 Update `_call_gateway` in `janitor/worker.py`:
 ```python
@@ -668,12 +668,12 @@ def _call_gateway(cli: str, prompt: str, system: str | None, timeout: int) -> st
     return raw.strip()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests/test_worker.py`
 Expected: PASS
 
-- [ ] **Step 5: Commit Task 4**
+- **Step 5: Commit Task 4**
 
 ```bash
 git add janitor/worker.py tests/test_worker.py
@@ -695,7 +695,7 @@ git commit -m "fix(janitor): stream gateway payloads over stdin to prevent ARG_M
   - `overview_repo(repo_dir: Path, state_mgr: StateManager, dry_run: bool = False) -> dict`
   - `merge_sentinel_block(existing_text: str, tag: str, new_content: str) -> str`
 
-- [ ] **Step 1: Write failing test for sentinel merging and first-run bootstrap**
+- **Step 1: Write failing test for sentinel merging and first-run bootstrap**
 
 Write `tests/test_reconciler.py`:
 ```python
@@ -730,12 +730,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests/test_reconciler.py`
 Expected: FAIL (`ModuleNotFoundError: No module named 'janitor.reconciler'`)
 
-- [ ] **Step 3: Implement `janitor/reconciler.py`**
+- **Step 3: Implement `janitor/reconciler.py`**
 
 Create `janitor/reconciler.py`:
 ```python
@@ -862,12 +862,12 @@ def sweep_repo(repo_dir: Path, state_mgr: StateManager, run_id: str, dry_run: bo
     return {"repo": repo_dir.name, "status": "committed" if committed else "written"}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests/test_reconciler.py`
 Expected: PASS (2 tests passing)
 
-- [ ] **Step 5: Commit Task 5**
+- **Step 5: Commit Task 5**
 
 ```bash
 git add janitor/reconciler.py tests/test_reconciler.py
@@ -889,7 +889,7 @@ git commit -m "feat(janitor): add sentinel-based reconciler with first-run boots
   - Subcommands: `sweep`, `overview`, `tidy`, `status`
   - Flags: `--all`, `--dry-run`, `--json`
 
-- [ ] **Step 1: Write failing test for CLI commands**
+- **Step 1: Write failing test for CLI commands**
 
 Write `tests/test_cli.py`:
 ```python
@@ -907,12 +907,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 Run: `python3 -m unittest tests/test_cli.py`
 Expected: FAIL (subcommand missing or argument error)
 
-- [ ] **Step 3: Implement `janitor/cli.py`**
+- **Step 3: Implement `janitor/cli.py`**
 
 Update `janitor/cli.py`:
 ```python
@@ -1003,12 +1003,12 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest tests/test_cli.py`
 Expected: PASS
 
-- [ ] **Step 5: Commit Task 6**
+- **Step 5: Commit Task 6**
 
 ```bash
 git add janitor/cli.py tests/test_cli.py
@@ -1030,7 +1030,7 @@ git commit -m "feat(janitor): add CLI with fleet discovery, tidy, and structured
 - Consumes: Systemd scheduler on Homelab Linux master
 - Produces: Automated unattended nightly and weekly runs over SSH
 
-- [ ] **Step 1: Write `scripts/janitor-runner.sh`**
+- **Step 1: Write `scripts/janitor-runner.sh`**
 
 ```bash
 #!/bin/bash
@@ -1048,7 +1048,7 @@ fi
 exec python3 -m janitor.cli "$@"
 ```
 
-- [ ] **Step 2: Write Homelab Systemd Service & Timer Units**
+- **Step 2: Write Homelab Systemd Service & Timer Units**
 
 Create `systemd/janitor-sweep.service`:
 ```ini
@@ -1106,14 +1106,14 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-- [ ] **Step 3: Make scripts executable and verify syntax**
+- **Step 3: Make scripts executable and verify syntax**
 
 ```bash
 chmod +x scripts/janitor-runner.sh
 bash -n scripts/janitor-runner.sh
 ```
 
-- [ ] **Step 4: Commit Task 7**
+- **Step 4: Commit Task 7**
 
 ```bash
 git add systemd/ scripts/janitor-runner.sh
@@ -1128,21 +1128,21 @@ git commit -m "feat(janitor): add homelab systemd timers and mac mini ssh runner
 - Test: All tests in `tests/`
 - Verification: Live dry-run against `janitor` and `maya`
 
-- [ ] **Step 1: Run full unit test suite**
+- **Step 1: Run full unit test suite**
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 Expected: 100% passing (15+ unit tests across git_ops, state, hygiene, reconciler, worker, cli).
 
-- [ ] **Step 2: Verify local editable install**
+- **Step 2: Verify local editable install**
 
 ```bash
 python3 -m pip install -e .
 which janitor || python3 -m janitor.cli --help
 ```
 
-- [ ] **Step 3: Live smoke test against `janitor` repo**
+- **Step 3: Live smoke test against `janitor` repo**
 
 ```bash
 python3 -m janitor.cli tidy --json
@@ -1150,14 +1150,14 @@ python3 -m janitor.cli sweep --dry-run
 ```
 Expected: Valid JSON output; clean dry-run preview.
 
-- [ ] **Step 4: Live smoke test against `maya` repo**
+- **Step 4: Live smoke test against `maya` repo**
 
 ```bash
 python3 -m janitor.cli sweep /Volumes/2TB_SSD/GitHub/maya --dry-run
 ```
 Expected: Inspects Maya git status; produces valid preview.
 
-- [ ] **Step 5: Final commit & tag**
+- **Step 5: Final commit & tag**
 
 ```bash
 git add .

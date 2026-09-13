@@ -1,15 +1,16 @@
 # Janitor Gateway2000 Auto-Only Routing Implementation Plan
 
-> For agentic workers: use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+> Archived completed implementation procedure. Do not execute again; use root TODO.md and HANDOFF.md for current scope and evidence.
 
 **Goal:** Make every live Janitor model request use Gateway2000 auto and never select g2k-bg, then deploy and rerun the missed fleet sweep.
 
-**Status, 2026-09-12 regroup:** Tasks 1–3 and Task 4 steps 1–3 were completed
-according to HANDOFF.md (commits 79c45ba, 8c0d8ad, ca861d8; 161 tests and a
-bounded auto probe). Task 4 fleet acceptance failed/interrupted. Historical
-step checkboxes below are retained as the original procedure, not open work.
-The canonical remaining checklist is now root TODO.md. Do not repeat the
-red-test setup or launch another fleet sweep before the bounded diagnosis gate.
+**Status, 2026-09-12 completion:** Implementation, publication, deployment,
+and fleet acceptance are complete. Recovery fixed the non-repository usage
+log path and constrained client synthesis; 166 tests passed. Final real timer
+run_1789261279 covered all 81 targets with zero failures and service exit 0.
+Both normal Pacific schedules are active/enabled. The original commands below
+are historical procedure, not current instructions; HANDOFF.md records the
+final routing flags, service behavior, evidence, and preservation boundaries.
 
 **Architecture:** The Mac mini worker invokes the g2k shell function from the sourced Gateway2000 helper through zsh -lc, streaming the full prompt through stdin. The existing OpenRouter free HTTP path remains only for machines without a Gateway2000 auto helper.
 
@@ -36,7 +37,7 @@ red-test setup or launch another fleet sweep before the bounded diagnosis gate.
 - Consumes the current call_free and subprocess.run contracts.
 - Produces _gateway_command() -> tuple[list[str], str] | None and auto-lane streaming coverage.
 
-- [ ] Step 1: Replace the background fixture
+- Step 1: Replace the background fixture
 
 Replace the old GATEWAY constant with:
 
@@ -51,7 +52,7 @@ AUTO_LABEL = "gateway2000/auto"
 
 Update _completed, timeout commands, subprocess assertions, and usage assertions to use AUTO_COMMAND and AUTO_LABEL. Patch janitor.worker._gateway_command with return value (AUTO_COMMAND, AUTO_LABEL).
 
-- [ ] Step 2: Add the selector regression test
+- Step 2: Add the selector regression test
 
 Import janitor.worker and add:
 
@@ -76,7 +77,7 @@ Import janitor.worker and add:
         self.assertNotIn("g2k-bg", command[0][2])
 ~~~
 
-- [ ] Step 3: Run the focused tests and confirm red
+- Step 3: Run the focused tests and confirm red
 
 Run:
 
@@ -98,7 +99,7 @@ Expected: FAIL because _gateway_command does not yet exist and the tests still t
 - Consumes ~/.config/gateway2000/gateway2000.zsh and zsh on PATH.
 - Produces _gateway_command() -> tuple[list[str], str] | None and an auto-only call_free dispatch.
 
-- [ ] Step 1: Add the auto helper constants
+- Step 1: Add the auto helper constants
 
 Add after _cached_api_key:
 
@@ -112,7 +113,7 @@ AUTO_GATEWAY_SCRIPT = (
 
 Update the module docstring to say Gateway2000 auto is preferred and g2k-bg is never selected.
 
-- [ ] Step 2: Implement the selector
+- Step 2: Implement the selector
 
 Replace _gateway_cli with:
 
@@ -127,7 +128,7 @@ def _gateway_command() -> tuple[list[str], str] | None:
 
 This selector must not call shutil.which("g2k-bg") or execute the misleading PATH wrapper. Gateway-less environments continue to use the existing OpenRouter path.
 
-- [ ] Step 3: Make the gateway call accept argv and a label
+- Step 3: Make the gateway call accept argv and a label
 
 Change _call_gateway to:
 
@@ -159,7 +160,7 @@ def _call_gateway(
     return raw.strip()
 ~~~
 
-- [ ] Step 4: Update call_free dispatch
+- Step 4: Update call_free dispatch
 
 Replace the existing gateway block with:
 
@@ -170,7 +171,7 @@ Replace the existing gateway block with:
         return _call_gateway(command, label, prompt, system, timeout)
 ~~~
 
-- [ ] Step 5: Run the focused worker suite
+- Step 5: Run the focused worker suite
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_worker.py
@@ -178,7 +179,7 @@ PYTHONPATH=. pytest -q tests/test_worker.py
 
 Expected: all worker tests pass and the subprocess argv contains zsh, the sourced helper, and g2k -p -.
 
-- [ ] Step 6: Commit the backend change
+- Step 6: Commit the backend change
 
 ~~~bash
 git add janitor/worker.py tests/test_worker.py
@@ -199,7 +200,7 @@ git commit -m "fix: route Janitor model calls through Gateway2000 auto"
 - Consumes the implemented auto-only worker policy.
 - Produces truthful operator and agent documentation.
 
-- [ ] Step 1: Update the README topology
+- Step 1: Update the README topology
 
 Replace the inference line with:
 
@@ -209,15 +210,15 @@ Replace the inference line with:
 
 Keep the OpenRouter fallback note, but state that it applies only without the Gateway2000 auto helper.
 
-- [ ] Step 2: Update the current overview and reconciler contract
+- Step 2: Update the current overview and reconciler contract
 
 In LLM-OVERVIEW.md, describe the model gateway as the sourced Gateway2000 g2k auto function. In janitor/reconciler.py, change the module contract from g2k-bg/g2k when present to Gateway2000 auto when the helper is present.
 
-- [ ] Step 3: Update the worker test description
+- Step 3: Update the worker test description
 
 Make the no-backend test description refer to the Gateway2000 auto helper rather than naming g2k-bg.
 
-- [ ] Step 4: Check active references
+- Step 4: Check active references
 
 ~~~bash
 rg -n "g2k-bg|background lane|background route" README.md LLM-OVERVIEW.md janitor tests
@@ -225,7 +226,7 @@ rg -n "g2k-bg|background lane|background route" README.md LLM-OVERVIEW.md janito
 
 Expected: no active Janitor execution path or current overview claims g2k-bg. Historical design and plan records may retain original wording.
 
-- [ ] Step 5: Commit the documentation change
+- Step 5: Commit the documentation change
 
 ~~~bash
 git add README.md LLM-OVERVIEW.md janitor/reconciler.py tests/test_worker.py
@@ -245,7 +246,7 @@ git commit -m "docs: describe Janitor Gateway2000 auto routing"
 - Consumes committed Janitor source and the repaired systemd transport.
 - Produces a successful bounded auto completion, a fleet run through auto, and durable outcome evidence.
 
-- [ ] Step 1: Run local verification
+- Step 1: Run local verification
 
 ~~~bash
 PYTHONPATH=. pytest -q
@@ -255,7 +256,7 @@ git diff --check
 
 Expected: the full suite passes, Ruff reports no violations, and existing dirty files remain unstaged.
 
-- [ ] Step 2: Verify a live auto completion
+- Step 2: Verify a live auto completion
 
 ~~~bash
 ssh macmini 'cd /Volumes/2TB_SSD/GitHub/janitor && python3 -c '\''from janitor.worker import call_free; print(call_free("Reply exactly JANITOR_AUTO_ONLY_PROBE"))'\''
@@ -263,7 +264,7 @@ ssh macmini 'cd /Volumes/2TB_SSD/GitHub/janitor && python3 -c '\''from janitor.w
 
 Expected: JANITOR_AUTO_ONLY_PROBE is returned.
 
-- [ ] Step 3: Confirm the repaired systemd units
+- Step 3: Confirm the repaired systemd units
 
 ~~~bash
 ssh homelab 'systemctl --user cat janitor-sweep.service; systemctl --user cat janitor-overview.service'
@@ -271,7 +272,7 @@ ssh homelab 'systemctl --user cat janitor-sweep.service; systemctl --user cat ja
 
 Expected: both units omit User= and use /Users/macmini/.local/bin/janitor-runner.
 
-- [ ] Step 4: Run the missed fleet sweep
+- Step 4: Run the missed fleet sweep
 
 ~~~bash
 ssh homelab 'systemctl --user start --wait janitor-sweep.service'
@@ -279,7 +280,7 @@ ssh homelab 'systemctl --user start --wait janitor-sweep.service'
 
 Expected: exit 0 when required syntheses complete. If a provider failure remains, exit 1 and durable state must identify it; do not call that success.
 
-- [ ] Step 5: Verify all repository outcomes and timer state
+- Step 5: Verify all repository outcomes and timer state
 
 ~~~bash
 ssh macmini 'run_id=$(jq -r .janitor.last_run.run_id /Users/macmini/.local/state/janitor/state.json); jq -r --arg run_id "$run_id" '\''[to_entries[] | select(.key != "janitor" and .value.last_run.run_id == $run_id) | .value.last_run.status] | {repos:length, committed:(map(select(. == "committed"))|length), written:(map(select(. == "written"))|length), quiet:(map(select(. == "quiet"))|length), synthesis_failed:(map(select(. == "synthesis_failed"))|length), error:(map(select(. == "error"))|length)}'\'' /Users/macmini/.local/state/janitor/state.json'
@@ -288,7 +289,7 @@ ssh homelab 'systemctl --user show janitor-sweep.timer -p ActiveState -p NextEla
 
 Expected: repos is 80, state counts match the run output, the timer is active, and the next daily trigger is present. The command derives the run identifier from Janitor's own durable record so a stale prior run is not used as evidence.
 
-- [ ] Step 6: Review final repository safety
+- Step 6: Review final repository safety
 
 ~~~bash
 git status --short --branch

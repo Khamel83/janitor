@@ -1,8 +1,8 @@
 # Janitor Branch and Worktree Review Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+> Archived completed implementation procedure. Do not execute again.
 >
-> **Execution status (2026-09-11):** Implemented and merged locally into `main` at `780767a`. The merged tree passes `PYTHONPATH=. pytest -q` (159 tests), `ruff check janitor tests`, and `git diff --check`. The feature worktree and branch were removed after verification; the local merge has not been pushed.
+> **Execution status (updated 2026-09-12):** Implemented and merged at `780767a`, now published on `origin/main` and installed on the shared Mac worker source. The original merge passed 159 tests; current recovery passed 166 and the final timer-driven fleet run passed for all 81 targets. The feature worktree and branch were removed. Root `TODO.md` alone tracks current scope/status. Do not rebuild this feature or dispatch its historical review workflow again.
 
 **Goal:** Add a deterministic, local-first, report-only branch and worktree review to Janitor, available in nightly sweeps and through 'janitor branches'.
 
@@ -64,7 +64,7 @@ Create '.superpowers/sdd/progress.md' as the ignored execution ledger. This file
 - Add 'resolve_git_metadata(repo_dir: Path) -> tuple[Path, Path] | None', returning absolute worktree gitdir and common gitdir from 'git rev-parse --git-dir' and 'git rev-parse --git-common-dir'.
 - Keep 'check_preflight_guards(repo_dir: Path) -> str | None' unchanged for callers, but make it check resolved worktree and common gitdirs.
 
-- [ ] **Step 1: Write failing linked-worktree and timeout tests.**
+- **Step 1: Write failing linked-worktree and timeout tests.**
 
 Add these behaviors to the existing test files:
 
@@ -115,7 +115,7 @@ def test_is_wip_stale_ignores_linked_worktree_git_pointer(self):
 
 Add a unit test that patches 'subprocess.run' to raise 'subprocess.TimeoutExpired' for '_sh' and asserts '_sh' returns an empty string instead of raising. Import '_sh' in that test only.
 
-- [ ] **Step 2: Run the focused tests and confirm the new tests fail for the intended missing behavior.**
+- **Step 2: Run the focused tests and confirm the new tests fail for the intended missing behavior.**
 
 Run:
 
@@ -125,7 +125,7 @@ PYTHONPATH=. pytest -q tests/test_git_ops.py tests/test_hygiene.py
 
 Expected: existing tests pass and the new linked-worktree/timeout assertions fail because preflight still inspects only 'repo_dir/.git' and '_non_git_walk' still yields '.git' pointer files.
 
-- [ ] **Step 3: Write minimal timeout-aware Git helpers and metadata resolution.**
+- **Step 3: Write minimal timeout-aware Git helpers and metadata resolution.**
 
 Implement the minimal behavior:
 
@@ -161,7 +161,7 @@ if ".git" in dirs:
 files = [name for name in files if name != ".git"]
 ~~~
 
-- [ ] **Step 4: Run the focused tests and the complete baseline suite.**
+- **Step 4: Run the focused tests and the complete baseline suite.**
 
 Run:
 
@@ -172,7 +172,7 @@ PYTHONPATH=. pytest -q
 
 Expected: both commands exit 0; no existing behavior regresses.
 
-- [ ] **Step 5: Commit the task.**
+- **Step 5: Commit the task.**
 
 ~~~bash
 git add janitor/git_ops.py janitor/hygiene.py tests/test_git_ops.py tests/test_hygiene.py
@@ -192,7 +192,7 @@ git commit -m "fix: harden git metadata and worktree guards"
 - The report dictionary must contain 'repo', 'observed_at', 'fetch', 'report_stale', 'base', 'branches', 'attention_flags', and 'report_hash'.
 - Each branch row must contain 'name', 'local_ref', 'remote_refs', 'refs', 'tip', 'worktrees', 'classification', 'attention_flags', 'focus', and 'evidence'.
 
-- [ ] **Step 1: Write failing collector tests covering the report contract.**
+- **Step 1: Write failing collector tests covering the report contract.**
 
 Create Git fixtures with deterministic commit dates and these tests:
 
@@ -247,7 +247,7 @@ def test_missing_worktree_is_reported_without_status_probe(self):
 
 Also test fetch outcomes with mocked 'subprocess.run': successful fetch, non-zero fetch, timeout, no remote, and 'fetch=False'. Assert the exact environment contains 'GIT_TERMINAL_PROMPT=0' and the required 'GIT_SSH_COMMAND', and assert no fetch runs for 'fetch=False'.
 
-- [ ] **Step 2: Run the new tests and confirm they fail because the module and collector do not exist.**
+- **Step 2: Run the new tests and confirm they fail because the module and collector do not exist.**
 
 Run:
 
@@ -257,7 +257,7 @@ PYTHONPATH=. pytest -q tests/test_branch_review.py
 
 Expected: collection fails with the missing 'janitor.branch_review' import. Fix only test-fixture typos if needed; do not implement production code before observing the intended failure.
 
-- [ ] **Step 3: Implement bounded Git querying and fetch.**
+- **Step 3: Implement bounded Git querying and fetch.**
 
 Add these constants and internal boundaries:
 
@@ -292,7 +292,7 @@ Build recent subjects with 'git log -n 5 --format=%s <ref>'. Read 'CONTEXT.md' a
 
 Implement classification with 'now_epoch - committer_timestamp', dirty-present-worktree priority, and 'auto-wip/' priority. Add row flags for dirty, stale-unmerged-ahead, unattached local, abandoned auto-WIP, missing worktree, and comparison unknown. Add 'stale_fetch_data' at report level when freshness is limited.
 
-- [ ] **Step 4: Implement deterministic report assembly and hash.**
+- **Step 4: Implement deterministic report assembly and hash.**
 
 Group refs by logical name, attach worktrees by 'refs/heads/<name>', compute focus as a bounded deterministic summary of recent subjects/paths or 'unknown', and sort rows by:
 
@@ -302,7 +302,7 @@ Group refs by logical name, attach worktrees by 'refs/heads/<name>', compute foc
 
 Use 'classification_rank = {"abandoned_auto_wip": 0, "active": 1, "aging": 2, "stale": 3}' and a stable boolean-derived attention rank. 'branch_report_hash' must hash canonical JSON with 'observed_at' and 'report_hash' removed, 'sort_keys=True', and compact separators.
 
-- [ ] **Step 5: Implement and test the deterministic Markdown renderer.**
+- **Step 5: Implement and test the deterministic Markdown renderer.**
 
 Render the exact block shape:
 
@@ -322,7 +322,7 @@ The renderer must include every row, use fixed source commit dates, escape Markd
 
 Add tests for attention-first ordering, stable tie sorting by name, escaping '|' and newlines, no branches, base unavailable, repeated render byte equality, and hash equality when only 'observed_at' changes.
 
-- [ ] **Step 6: Run focused and complete tests.**
+- **Step 6: Run focused and complete tests.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_branch_review.py
@@ -331,7 +331,7 @@ PYTHONPATH=. pytest -q
 
 Expected: exit 0 with all collector/render tests and all prior tests passing.
 
-- [ ] **Step 7: Commit the task.**
+- **Step 7: Commit the task.**
 
 ~~~bash
 git add janitor/branch_review.py tests/test_branch_review.py
@@ -352,7 +352,7 @@ git commit -m "feat: collect and render branch review reports"
 - Add 'extract_sentinel_block(existing_text: str, tag: str) -> str' and 'remove_sentinel_block(existing_text: str, tag: str) -> str' beside 'merge_sentinel_block'.
 - 'record_branch_observation' stores only 'last_report_hash', 'last_semantic_change_date', and per-branch continuity ('first_seen', 'last_seen', 'last_sha', 'classification', 'present', 'missing_since'); remove tombstones missing for more than 90 days.
 
-- [ ] **Step 1: Write failing state and sentinel tests.**
+- **Step 1: Write failing state and sentinel tests.**
 
 Add tests for first observation, stable 'first_seen', updated 'last_seen'/SHA/classification, missing branch tombstones, 90-day expiry using an injected timestamp, and reload persistence. Add sentinel tests:
 
@@ -367,7 +367,7 @@ def test_missing_or_malformed_sentinel_is_left_unchanged_by_remove(self):
     self.assertEqual(remove_sentinel_block(text, "branches"), text)
 ~~~
 
-- [ ] **Step 2: Run focused tests and observe intended failures.**
+- **Step 2: Run focused tests and observe intended failures.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_state.py tests/test_reconciler.py
@@ -375,13 +375,13 @@ PYTHONPATH=. pytest -q tests/test_state.py tests/test_reconciler.py
 
 Expected: only the new API assertions fail; all existing tests continue to pass.
 
-- [ ] **Step 3: Implement compact state observation and sentinel extraction/removal.**
+- **Step 3: Implement compact state observation and sentinel extraction/removal.**
 
 Use one 'branch_review' object under the existing repository record. Preserve all existing state keys and WIP behavior. Use UTC calendar date from 'observed_at' for 'last_semantic_change_date'; update it only when 'report_hash' changes. Remove expired missing entries before saving.
 
 Implement extraction with the same escaped marker regex used by 'merge_sentinel_block'; return only the first recognized block’s inner content, and make removal a no-op if there is no complete block.
 
-- [ ] **Step 4: Run focused and complete tests.**
+- **Step 4: Run focused and complete tests.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_state.py tests/test_reconciler.py
@@ -390,7 +390,7 @@ PYTHONPATH=. pytest -q
 
 Expected: exit 0.
 
-- [ ] **Step 5: Commit the task.**
+- **Step 5: Commit the task.**
 
 ~~~bash
 git add janitor/state.py janitor/reconciler.py tests/test_state.py tests/test_reconciler.py
@@ -408,7 +408,7 @@ git commit -m "feat: persist branch review continuity"
 - Import 'BRANCH_SENTINEL_TAG', 'collect_branch_report', 'render_branch_block', and 'branch_report_hash' from 'janitor.branch_review'.
 - Keep existing 'quiet', 'unchanged_hash', 'dry_run', 'written', 'committed', and 'synthesis_failed' statuses compatible; add nested branch report metadata rather than replacing existing keys.
 
-- [ ] **Step 1: Write failing integration tests before changing sweep code.**
+- **Step 1: Write failing integration tests before changing sweep code.**
 
 Define a local test helper with a stable report shape so the reconciler tests
 do not depend on GitHub or on the collector implementation:
@@ -494,7 +494,7 @@ def test_branch_report_is_persisted_when_normal_synthesis_fails(self, collect, r
 
 Add coverage for branch output sharing a normal commit, dirty/non-default no-commit, dry-run no fetch/no writes, preflight no-touch, exact byte no-op, and the existing normal hash gate remaining independent of branch output.
 
-- [ ] **Step 2: Run the new integration tests and confirm they fail for the old early-return/commit behavior.**
+- **Step 2: Run the new integration tests and confirm they fail for the old early-return/commit behavior.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_reconciler.py
@@ -502,7 +502,7 @@ PYTHONPATH=. pytest -q tests/test_reconciler.py
 
 Expected: new tests fail because 'sweep_repo' currently returns before branch collection, sends the full Context to the model, and hardcodes 'main'/'master'.
 
-- [ ] **Step 3: Implement the orchestration in the approved order.**
+- **Step 3: Implement the orchestration in the approved order.**
 
 Use this control flow:
 
@@ -541,7 +541,7 @@ atomic_stage_and_commit(
 
 For a combined normal/branch update, stage only changed files from 'SWEEP_FILES' and use the existing sweep message. For dirty or non-default status, write managed blocks but never commit. Record the branch observation after collection using 'StateManager', and record the run status after the write/commit decision.
 
-- [ ] **Step 4: Run targeted integration tests and the complete suite.**
+- **Step 4: Run targeted integration tests and the complete suite.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_reconciler.py
@@ -550,7 +550,7 @@ PYTHONPATH=. pytest -q
 
 Expected: exit 0; normal existing sweep tests and all new branch fast-path/commit tests pass.
 
-- [ ] **Step 5: Commit the task.**
+- **Step 5: Commit the task.**
 
 ~~~bash
 git add janitor/reconciler.py tests/test_reconciler.py
@@ -571,7 +571,7 @@ git commit -m "feat: integrate branch review into sweeps"
 - Pass 'no_fetch' through 'main()' to 'sweep_repo(repo, state_mgr, run_id, dry_run=args.dry_run, no_fetch=args.no_fetch)'.
 - Human 'branches' output prints a compact status line followed by the rendered branch block; JSON uses the existing top-level envelope and full report.
 
-- [ ] **Step 1: Write failing CLI tests.**
+- **Step 1: Write failing CLI tests.**
 
 Add tests for parser/dispatch and output:
 
@@ -614,7 +614,7 @@ def test_branches_human_output_contains_all_rows(self):
 
 Update existing sweep mock assertions to accept the added 'no_fetch=False' keyword while preserving existing behavior.
 
-- [ ] **Step 2: Run CLI tests and observe intended failures.**
+- **Step 2: Run CLI tests and observe intended failures.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_cli.py
@@ -622,11 +622,11 @@ PYTHONPATH=. pytest -q tests/test_cli.py
 
 Expected: new command/flag tests fail because the parser and dispatch do not yet define them.
 
-- [ ] **Step 3: Implement CLI dispatch and output.**
+- **Step 3: Implement CLI dispatch and output.**
 
 Add the parser entries using the same target arguments as 'sweep'. In 'main()' dispatch 'args.command == "branches"' before the existing commands. Keep 'FAILING_STATUSES' unchanged unless a collector exception is converted to the existing 'error' result. Add a branch preview path in '_emit' only for the 'branches' result’s 'markdown' field.
 
-- [ ] **Step 4: Document the user-facing behavior.**
+- **Step 4: Document the user-facing behavior.**
 
 Update 'README.md' with:
 
@@ -636,7 +636,7 @@ janitor branches [--all] [--json] [--no-fetch]
 
 State that the command inventories local/remote-tracking refs and linked worktrees, fetches only the primary remote unless disabled, reports stale freshness when it cannot refresh refs, never performs branch actions, and feeds the same deterministic block used by nightly 'sweep'.
 
-- [ ] **Step 5: Run CLI, full suite, and a real local smoke test.**
+- **Step 5: Run CLI, full suite, and a real local smoke test.**
 
 ~~~bash
 PYTHONPATH=. pytest -q tests/test_cli.py
@@ -646,7 +646,7 @@ PYTHONPATH=. python -m janitor.cli branches --no-fetch --json .
 
 Expected: all tests exit 0; the smoke test emits one valid JSON envelope with 'schema_version', 'run_id', a branch review, exact base information or 'base_unavailable', and all logical branch rows. It must not modify 'CONTEXT.md', 'TODO.md', or the working tree.
 
-- [ ] **Step 6: Commit the task.**
+- **Step 6: Commit the task.**
 
 ~~~bash
 git add janitor/cli.py README.md tests/test_cli.py
@@ -655,9 +655,9 @@ git commit -m "feat: expose branch review CLI"
 
 ## Final review and verification
 
-- [ ] Read this plan against 'docs/superpowers/specs/2026-09-11-janitor-branch-worktree-review-design.md' and confirm every design section has a task: safety/fetch (Tasks 1–2), inventory/comparison/classification (Task 2), sentinel/prompt/state (Tasks 3–4), orchestration/commit gate (Task 4), CLI/output/docs (Task 5), and acceptance tests across all tasks.
-- [ ] Confirm every implementation step has concrete paths, signatures, commands, expected results, and no placeholder instructions; references to the repository TODO.md are requirements, not placeholders.
-- [ ] Run 'PYTHONPATH=. pytest -q' and read the complete result.
-- [ ] Run 'git diff --check' and 'git status --short --branch'; only intended committed changes may remain.
-- [ ] Create a review package from the branch merge-base through 'HEAD' and dispatch the final whole-branch code reviewer before offering integration options.
-- [ ] Keep the implementation worktree and feature branch until the user chooses merge, PR push, or keep-as-is; never force-push or discard work without explicit confirmation.
+- Read this plan against 'docs/superpowers/specs/2026-09-11-janitor-branch-worktree-review-design.md' and confirm every design section has a task: safety/fetch (Tasks 1–2), inventory/comparison/classification (Task 2), sentinel/prompt/state (Tasks 3–4), orchestration/commit gate (Task 4), CLI/output/docs (Task 5), and acceptance tests across all tasks.
+- Confirm every implementation step has concrete paths, signatures, commands, expected results, and no placeholder instructions; references to the repository TODO.md are requirements, not placeholders.
+- Run 'PYTHONPATH=. pytest -q' and read the complete result.
+- Run 'git diff --check' and 'git status --short --branch'; only intended committed changes may remain.
+- Create a review package from the branch merge-base through 'HEAD' and dispatch the final whole-branch code reviewer before offering integration options.
+- Keep the implementation worktree and feature branch until the user chooses merge, PR push, or keep-as-is; never force-push or discard work without explicit confirmation.

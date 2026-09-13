@@ -547,7 +547,7 @@ def sweep_repo(
                 "raw": synthesis_raw,
                 "branch_status": "unchanged",
             }
-        state_mgr.record_run(repo_dir.name, "synthesis_failed", run_id)
+        state_mgr.record_run(repo_dir.name, "synthesis_failed", run_id, failure=synthesis_raw or "empty response")
         return _attach_branch_result(result, branch_report, branch_changed, branch_status)
 
     if normal_needed:

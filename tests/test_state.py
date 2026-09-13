@@ -73,6 +73,14 @@ class TestStateManager(unittest.TestCase):
         self.assertEqual(last_run["status"], "skipped")
         self.assertEqual(last_run["run_id"], "run_2")
 
+    def test_failure_evidence_is_durable_without_raw_content(self):
+        self.sm.record_run("maya", "synthesis_failed", "run_failure",
+                           failure="gateway2000/auto failed (exit 7): private prompt secret")
+        last = StateManager(self.state_dir).get_last_run("maya")
+        self.assertEqual(last["failure"]["kind"], "process_exit")
+        self.assertEqual(last["failure"]["exit_code"], 7)
+        self.assertNotIn("private prompt", self.state_file().read_text())
+
     def test_wip_branch_expiry_filters_by_max_age_days(self):
         # now = 2_000_000; cutoff for 1 day = 2_000_000 - 86_400 = 1_913_600
         self.sm.track_wip_branch(

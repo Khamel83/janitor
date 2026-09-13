@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 macmini "caffeinate -is /Users/macmini/.local/bin/janitor-runner overview --all --json"
-TimeoutStopSec=1800
+TimeoutStartSec=4h
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal

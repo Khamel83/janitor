@@ -471,6 +471,18 @@ class StatusCommandTests(CliTestCase):
 
 
 class ExitCodeTests(CliTestCase):
+    def test_fleet_stops_after_three_failed_syntheses_and_records_progress(self):
+        repos = [self.fake_repo(f"failure-{i}") for i in range(5)]
+        with patch("janitor.cli.sweep_repo", side_effect=lambda repo, *a, **kw: {
+            "repo": repo.name, "status": "synthesis_failed", "raw": "private response"
+        }) as sweep:
+            code, out = self.run_cli(["sweep", "--all", "--json"], workspace=self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(sweep.call_count, 3)
+        self.assertEqual(len(json.loads(out)["results"]), 5)
+        self.assertEqual(StateManager(self.state_dir).get_last_run(repos[0].name)["status"], "synthesis_failed")
+        self.assertNotIn("private response", (self.state_dir / "runs.jsonl").read_text())
+
     def test_sweep_synthesis_failure_exits_1(self):
         repo = self.fake_repo("demo")
         with patch(

@@ -603,6 +603,7 @@ class TestSweepRepo(unittest.TestCase):
             _git(repo, "log", "-1", "--format=%B"),
         )
         self.assertEqual(self.sm.get_last_run("repo")["status"], "synthesis_failed")
+        self.assertIn("failure", self.sm.get_last_run("repo"))
 
     @patch("janitor.reconciler.extract_structured")
     @patch(

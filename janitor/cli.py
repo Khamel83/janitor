@@ -33,8 +33,10 @@ or ``error``.
 """
 
 import argparse
+import fcntl
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -303,7 +305,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def _main(argv: Optional[list[str]] = None) -> int:
     """Run one janitor job across its target repos; return the exit code."""
     args = _build_parser().parse_args(argv)
     # Branch reports are intentionally independent of persistent StateManager
@@ -313,9 +315,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_id = f"run_{int(time.time())}"
 
     results: list[dict] = []
+    failed_syntheses = 0
+    started = time.monotonic()
+    deadline = started + float(os.environ.get("JANITOR_RUN_TIMEOUT", "10800" if args.command == "overview" else "2700"))
     for repo in _resolve_targets(args):
+        repo_started = time.monotonic()
         try:
-            if args.command == "branches":
+            if args.command in {"sweep", "overview"} and (
+                time.monotonic() >= deadline or (getattr(args, "all", False) and failed_syntheses >= 3)
+            ):
+                result = {"repo": repo.name, "status": "error", "error": "run_stopped",
+                          "reason": "deadline_or_repeated_synthesis_failure"}
+            elif args.command == "branches":
                 result = _run_branches(repo, no_fetch=args.no_fetch)
             elif args.command == "sweep":
                 result = sweep_repo(
@@ -347,9 +358,43 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "error": f"{type(exc).__name__}: {exc}",
             }
         results.append(result)
+        if args.command in {"sweep", "overview", "tidy"} and not getattr(args, "dry_run", False):
+            state_mgr.record_run(repo.name, result["status"], run_id,
+                                 failure=str(result.get("raw") or result.get("error") or "unknown")
+                                 if result["status"] in FAILING_STATUSES else None)
+            receipt = dict(state_mgr.get_last_run(repo.name), repo=repo.name,
+                           command=args.command, elapsed_seconds=round(time.monotonic() - repo_started, 3))
+            with (state_mgr.state_dir / "runs.jsonl").open("a") as log:
+                log.write(json.dumps(receipt) + "\n")
+            print(f"[janitor] {repo.name}: {result['status']} ({receipt['elapsed_seconds']}s)", file=sys.stderr, flush=True)
+        if result.get("status") == "synthesis_failed":
+            failed_syntheses += 1
+        elif result.get("status") in {"committed", "written", "ok", "dry_run"}:
+            failed_syntheses = 0
 
     _emit(results, args, run_id)
     return 1 if any(r.get("status") in FAILING_STATUSES for r in results) else 0
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.command not in {"sweep", "overview", "tidy"} or getattr(args, "dry_run", False):
+        return _main(argv)
+    root = Path(os.environ.get(STATE_DIR_ENV, str(Path.home() / ".local/state/janitor")))
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / "run.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("[janitor] Another mutating run is active; not starting a duplicate.", file=sys.stderr)
+            return 1
+        def stop(signum, frame):
+            raise SystemExit(128 + signum)
+        previous = signal.signal(signal.SIGTERM, stop)
+        try:
+            return _main(argv)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

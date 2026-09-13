@@ -18,6 +18,7 @@ unreadable file degrades to an empty state rather than crashing.
 
 import hashlib
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,13 +87,27 @@ class StateManager:
         self._repo(repo_name)["last_hash"] = input_hash
         self.save()
 
-    def record_run(self, repo_name: str, status: str, run_id: str):
+    def record_run(self, repo_name: str, status: str, run_id: str, failure: str | None = None):
         """Record the most recent run's outcome for ``repo_name``."""
         self._repo(repo_name)["last_run"] = {
             "status": status,
             "run_id": run_id,
             "ts": int(time.time()),
         }
+        if failure is not None:
+            # Retain diagnostic categories without persisting private model text.
+            evidence = {"kind": "invalid_response", "chars": len(failure),
+                        "sha256": hashlib.sha256(failure.encode()).hexdigest()}
+            code = re.search(r"failed \(exit (\d+)\)", failure)
+            if "timed out" in failure:
+                evidence["kind"] = "timeout"
+            elif code:
+                evidence.update(kind="process_exit", exit_code=int(code.group(1)))
+            elif "Rate limit" in failure or "Rate limited" in failure:
+                evidence["kind"] = "rate_limited"
+            elif "RuntimeError" in failure:
+                evidence["kind"] = "runtime_error"
+            self._repo(repo_name)["last_run"]["failure"] = evidence
         self.save()
 
     def get_last_run(self, repo_name: str) -> Optional[dict]:

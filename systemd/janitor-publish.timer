@@ -1,0 +1,9 @@
+[Unit]
+Description=Publish Janitor documentation PRs daily at 03:30 Pacific
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 America/Los_Angeles
+Persistent=true
+
+[Install]
+WantedBy=timers.target

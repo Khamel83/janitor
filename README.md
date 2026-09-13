@@ -2,10 +2,10 @@
 
 > Autonomous repository caretaker & living context reconciler for the Homelab fleet.
 
-Operational acceptance passed on 2026-09-12: 81 targets, zero failures, service
-exit 0 through the real timer/SSH worker flow. Both Pacific schedules are active
-and enabled. See [TODO.md](TODO.md) for scope and [HANDOFF.md](HANDOFF.md) for
-receipts, preservation notes, and recheck commands.
+The existing caretaker passed operational acceptance on 2026-09-12. The new
+overnight PR workflow adds documentation publication and a morning evidence
+packet. See [TODO.md](TODO.md) for scope and [HANDOFF.md](HANDOFF.md) for current
+deployment status and verified receipts.
 
 Janitor is an opinionated groundskeeper for your software repositories. It runs on a master–worker architecture between Homelab and your Mac mini, ensuring your repositories stay clean, documented, and reconciled against ground truth—without human friction or unsolicited prompt pollution.
 
@@ -39,14 +39,37 @@ When engineers or AI agents finish a session, walk away, and leave repos acciden
 
 ---
 
+### 4. Documentation PRs and layered review
+
+`janitor publish` creates documentation-only PRs from the repository's published
+default-branch evidence. It does not upload your dirty checkout, unpublished
+branches, or local branch inventory. Human-maintained text stays outside the
+generated sections. Existing open Janitor PRs remain intact for review; another
+night does not overwrite reviewer or human changes.
+
+The existing [Homelab PR reviewer](https://github.com/apps/khamel-homelab-pr-reviewer)
+reviews the PR through its normal GitHub event flow. Janitor does not change or
+duplicate that service. `janitor reviews` collects all open PRs in discovered
+repositories owned by the authenticated GitHub user, including code PRs made by
+other agents. It saves original context at each PR's base commit, changes,
+review comments, current-head checks, and immutable source links.
+
+The last layer is your final agent: compare the original goals with the combined
+changes and all review findings, then recommend MERGE or RE-CHECK, including
+dependencies and conflicts. Neither Janitor command merges anything. A bot's
+COMMENT review with a pass verdict is not GitHub approval or a merge decision.
+
 ## Operational Cadence
 
-Janitor runs on a dual-cadence master–worker schedule orchestrated by systemd on Homelab:
+Janitor uses systemd on Homelab to run the Mac worker. HANDOFF.md records which
+units have actually been deployed and verified.
 
 | Pass | Cadence | Trigger | What It Does |
 | :--- | :--- | :--- | :--- |
 | **Daily Sweep** | **Nightly at 03:00 Pacific** | `janitor-sweep.timer` on Homelab | SSH to Mac mini → runs auto-tidy on stale WIP → reconciles `CONTEXT.md` & `TODO.md` for active repos (quiet fast path). |
+| **Publish PRs** | **Nightly at 03:30 Pacific** | `janitor-publish.timer` | Bounded documentation PR publication; existing open PRs are retained. |
 | **Weekly Overview** | **Sunday at 04:00 Pacific** | `janitor-overview.timer` on Homelab | SSH to Mac mini → deep codebase inspection → refreshes `LLM-OVERVIEW.md` and mirrors to central docs. |
+| **Morning packet** | **Daily at 06:00 Pacific** | `janitor-reviews.timer` | Snapshot original context, all open PRs, review layers, and current-head checks for the final agent. |
 | **On-Demand** | **Anytime via CLI** | Manual `janitor` command | Instant health check, immediate tidy, or targeted repo sweep from your terminal. |
 
 ---
@@ -113,7 +136,29 @@ janitor overview --all
 
 # Machine-readable JSON output (used by Homelab & Baywatch)
 janitor sweep --all --json
+
+# Read-only eligibility preview: no model calls or GitHub mutations
+janitor publish --all --dry-run
+
+# Publish at most 20 new documentation PRs; never merge them
+janitor publish --all --limit 20
+
+# Larger initial pass, still one proposal per overlapping documentation scope
+janitor publish --all --limit 100
+
+# Refresh the local morning packet; no model calls or GitHub mutations
+janitor reviews --all
 ```
+
+Start the final review with [WORKER-PROMPT.md](WORKER-PROMPT.md). The latest
+packet is `~/.local/state/janitor/morning/latest.md`; timestamped snapshots retain
+the evidence from prior collection runs. Keep these artifacts local: they can
+contain private repository context. Missing or stale evidence requires a fresh
+check, not an inferred pass. The number of new PRs can be zero. Scheduled runs
+default to 20 new proposals; an explicit initial pass can use up to 100, also
+the rolling-24-hour ceiling. These are safety bounds, not PR-count targets.
+A project can have several independent code PRs in the packet; related updates
+to the same generated documentation sections stay one coherent proposal.
 
 ### Branch and worktree review
 

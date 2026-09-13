@@ -1,6 +1,29 @@
 # Janitor operational handoff
 
-Updated 2026-09-12, 18:06 America/Los_Angeles. Existing caretaker accepted and schedules restored.
+Updated 2026-09-13. Overnight publication is live and the morning evidence collector passed an actual Homelab service run. The initial pass opened 42 documentation PRs (including the canary). No PR was merged.
+
+## New authorized workflow
+
+Original context -> Janitor documentation PRs -> existing Homelab PR reviewer ->
+private morning evidence packet -> user's final agent recommends MERGE / RE-CHECK.
+No PR is automatically merged. Existing code PRs are included in the packet;
+unpublished WIP is not automatically published. The reviewer service is unchanged.
+
+The implementation plan is `docs/superpowers/plans/2026-09-13-overnight-prs.md`.
+New units are installed, validated, enabled and active: publication next runs September 13 at 03:30 Pacific and collection at 06:00 Pacific. The first full collector was started through the installed Homelab service at 01:49 Pacific; its bounded retry passed at 02:06 Pacific after commit `7adce10` widened the collector-only published-document bound.
+Use WORKER-PROMPT.md for the final agent, and TODO.md for remaining delivery gates.
+
+## Overnight receipts and morning handoff
+
+- Initial fleet: 66 unique GitHub repositories; 41 published, one existing canary PR, 17 rejected `invalid_synthesis` outputs, seven ineligible repositories. The initial service exited 1 because those 17 proposals failed validation; no invalid PRs were published. This is partial publication success, not an all-green fleet run. Scheduled bounded publication can retry failed targets while preserving existing proposals.
+- Morning collector: the first attempt was incomplete only because Atlas `HANDOFF.md` was 169,992 bytes, above the old 128 KiB collector bound. The installed Homelab retry ran 02:03:12–02:06:53 Pacific, exited 0, and wrote `/Users/macmini/.local/state/janitor/morning/20260913T090653.476118Z/`. The packet is complete for 66 repositories and 47 open PRs: 47/47 evidence records complete, 38 reviewed-pass, seven findings, and two pending.
+- Canary: https://github.com/Khamel83/janitor/pull/4, head `b901808a5d762e70416fbff10871843ba5e8ae86`. Existing `khamel-homelab-pr-reviewer[bot]` review `5190231788` returned pass for that exact head. This COMMENTED review is not approval or merge authority. A repeat created no PR and made no model call.
+- Runtime checkout is at tested implementation `7adce10`; the installed SSH runner exposes `publish` and `reviews`. Remote main is intentionally unchanged pending implementation PR #5. Do not mistake local-main-ahead for missing deployment or push it blindly.
+- Publication receipts: `/Users/macmini/.local/state/janitor/publication-receipts.jsonl`. Original publication evidence: sibling `publication-intents/`.
+- Morning entry point: `/Users/macmini/.local/state/janitor/morning/latest.md`; JSON pointer: sibling `latest.json`. Use the timestamped report and FINAL-REVIEW-PROMPT linked there. Check timestamp and completeness; an earlier canary-only packet is not fleet acceptance.
+- The 06:00 job collects evidence only. It does not run a final reasoning agent. In the morning, start your agent with WORKER-PROMPT.md to assess all PRs together and recommend MERGE / RE-CHECK. Nothing merges automatically.
+
+The caretaker evidence below is historical acceptance of the earlier sweep, not the result of the new publication batch.
 
 ## Current state
 

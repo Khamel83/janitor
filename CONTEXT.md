@@ -1,6 +1,6 @@
 # Current operator context
 
-Updated 2026-09-13. Janitor's existing caretaker is accepted. The user authorized documentation PR publication plus a layered morning review packet; implementation and live acceptance are tracked in TODO.md and HANDOFF.md.
+Updated 2026-09-13. Janitor's documentation PR publication is live: 42 initial documentation PRs are open; 17 proposals were rejected as invalid synthesis and seven repositories were ineligible. Existing bot review is verified on the canary. Publication at 03:30 and evidence collection at 06:00 Pacific are enabled. See HANDOFF.md for precise receipts and the morning-agent entry point. No automatic merging or final reasoning-agent execution is scheduled.
 
 ## Review language
 

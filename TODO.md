@@ -23,11 +23,13 @@ units, not a count target: keep related updates together and include multiple
 independent project PRs in the final combined review. Preserve settled reasoning
 and evidence instead of making the next agent rediscover it.
 
-- [ ] Publish bounded documentation-only PRs from published default-branch evidence, without uploading local WIP or overwriting existing PR branches.
+- [x] Publish bounded documentation-only PRs from published default-branch evidence, without uploading local WIP or overwriting existing PR branches.
 - [ ] Collect original context, all open PR changes, existing bot reviews, and checks into a private morning packet.
-- [ ] Preserve original goals through every layer; provide a final-agent prompt for cross-PR MERGE / RE-CHECK recommendations, never automatic merging.
-- [ ] Pass offline tests and independent review; verify a real PR receives a matching-head review from the existing App.
-- [ ] Deploy and verify publication at 03:30 and morning collection at 06:00 Pacific; run the initial bounded fleet pass and record actual results.
+- [x] Preserve original goals through every layer; provide a final-agent prompt for cross-PR MERGE / RE-CHECK recommendations, never automatic merging.
+- [x] Pass offline tests and independent review; verify a real PR receives a matching-head review from the existing App.
+- [x] Deploy and verify publication at 03:30 and morning collection at 06:00 Pacific; run the initial bounded fleet pass and record actual results.
+
+Initial result: 42 documentation PRs open, 17 invalid synthesis outputs rejected, seven ineligible repositories. These failures remain visible for bounded retries; do not repeat completed implementation work. The final combined reasoning review is a morning agent task, not an automatic merge or a scheduled model run.
 
 Execution plan: [overnight PRs](docs/superpowers/plans/2026-09-13-overnight-prs.md). Checkboxes above record delivery, not just source-code claims.
 

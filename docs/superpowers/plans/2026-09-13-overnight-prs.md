@@ -1,5 +1,9 @@
 # Overnight PRs Implementation Plan
 
+## Delivery status — 2026-09-13
+
+Implementation tasks below are completed historical instructions, not a queue to replay. Publisher and collector passed independent review; the final metadata-error attribution correction passed regression coverage and the full suite (221 tests). Runtime is deployed locally; publication and collection timers are enabled. Initial publication produced 42 documentation PRs including the reviewed canary, with 17 invalid synthesis outputs safely rejected and seven ineligible repositories. First fleet collection is running through the installed service. HANDOFF.md and TODO.md own current operational status; final combined reasoning remains the user's morning-agent task. Remote main stays unchanged pending implementation PR review.
+
 > **For agentic workers:** Use subagent-driven-development, test first, and execute without additional design questions. The user approved this workflow and requested implementation now.
 
 **Goal:** Publish Janitor documentation changes as reviewable PRs and preserve the original context, PR changes, and overnight review layers for a final human-directed agent review.

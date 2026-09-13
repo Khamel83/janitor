@@ -1,6 +1,6 @@
 # Janitor operational handoff
 
-Updated 2026-09-13. Existing caretaker accepted; overnight PR workflow delivery is in progress. This section will record fresh deployment and downstream receipts before completion is claimed.
+Updated 2026-09-13. Overnight publication is live: the initial pass opened 42 documentation PRs (including the canary). No PR was merged.
 
 ## New authorized workflow
 
@@ -10,9 +10,19 @@ No PR is automatically merged. Existing code PRs are included in the packet;
 unpublished WIP is not automatically published. The reviewer service is unchanged.
 
 The implementation plan is `docs/superpowers/plans/2026-09-13-overnight-prs.md`.
-New units target publication at 03:30 Pacific and collection at 06:00 Pacific;
-their presence in source alone does not mean deployment. Live acceptance is pending.
+New units are installed, validated, enabled and active: publication next runs September 13 at 03:30 Pacific and collection at 06:00 Pacific. The first full collector was started through the installed Homelab service at 01:49 Pacific.
 Use WORKER-PROMPT.md for the final agent, and TODO.md for remaining delivery gates.
+
+## Overnight receipts and morning handoff
+
+- Initial fleet: 66 unique GitHub repositories; 41 published, one existing canary PR, 17 rejected `invalid_synthesis` outputs, seven ineligible repositories. The initial service exited 1 because those 17 proposals failed validation; no invalid PRs were published. This is partial publication success, not an all-green fleet run. Scheduled bounded publication can retry failed targets while preserving existing proposals.
+- Canary: https://github.com/Khamel83/janitor/pull/4, head `b901808a5d762e70416fbff10871843ba5e8ae86`. Existing `khamel-homelab-pr-reviewer[bot]` review `5190231788` returned pass for that exact head. This COMMENTED review is not approval or merge authority. A repeat created no PR and made no model call.
+- Runtime checkout was fast-forwarded locally to tested implementation `158a044`; the installed SSH runner exposes `publish` and `reviews`. Remote main is intentionally unchanged pending the implementation PR. Do not mistake local-main-ahead for missing deployment or push it blindly.
+- Publication receipts: `/Users/macmini/.local/state/janitor/publication-receipts.jsonl`. Original publication evidence: sibling `publication-intents/`.
+- Morning entry point: `/Users/macmini/.local/state/janitor/morning/latest.md`; JSON pointer: sibling `latest.json`. Use the timestamped report and FINAL-REVIEW-PROMPT linked there. Check timestamp and completeness; an earlier canary-only packet is not fleet acceptance.
+- The 06:00 job collects evidence only. It does not run a final reasoning agent. In the morning, start your agent with WORKER-PROMPT.md to assess all PRs together and recommend MERGE / RE-CHECK. Nothing merges automatically.
+
+The caretaker evidence below is historical acceptance of the earlier sweep, not the result of the new publication batch.
 
 ## Current state
 

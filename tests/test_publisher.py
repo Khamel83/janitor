@@ -397,6 +397,93 @@ class PublisherTestCase(unittest.TestCase):
         self.assertEqual(first_receipt["base"], BASE_SHA)
         self.assertEqual(first_receipt["head"], GENERATED_COMMIT_SHA)
 
+    def test_processed_state_failure_after_fresh_pr_keeps_published_effect_counted(self):
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=_generated_response()),
+            patch("janitor.publisher._mark_processed", side_effect=OSError("private disk detail")),
+        ):
+            results = publish_repositories(
+                ["alice/demo", "alice/later"], self.state_dir, limit=1
+            )
+
+        self.assertEqual(results[0], {
+            "repo": "alice/demo",
+            "status": "published",
+            "base": BASE_SHA,
+            "head": GENERATED_COMMIT_SHA,
+            "pr_url": "https://github.com/alice/demo/pull/1",
+            "state_error": "processed_state_update_failed",
+        })
+        self.assertEqual(results[1]["status"], "cap_deferred")
+        self.assertEqual(results[1]["reason"], "invocation_limit")
+        self.assertEqual(shared.pr_posts, 1)
+        receipts = [
+            json.loads(line)
+            for line in (self.state_dir / "publication-receipts.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(receipts[0]["status"], "published")
+        self.assertEqual(receipts[0]["base"], BASE_SHA)
+        self.assertEqual(receipts[0]["head"], GENERATED_COMMIT_SHA)
+        self.assertEqual(receipts[0]["pr_url"], "https://github.com/alice/demo/pull/1")
+        self.assertEqual(receipts[0]["state_error"], "processed_state_update_failed")
+        self.assertNotIn("private disk detail", json.dumps(receipts))
+
+        second = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=second),
+            patch("janitor.publisher.ROLLING_PUBLICATION_CAP", 1),
+            patch("janitor.publisher.extract_structured", side_effect=AssertionError("model called")),
+        ):
+            deferred = publish_repositories(["alice/next"], self.state_dir)
+        self.assertEqual(deferred[0]["status"], "cap_deferred")
+        self.assertEqual(deferred[0]["reason"], "rolling_24h_limit")
+        self.assertEqual(second.tree_posts + second.commit_posts + second.ref_posts + second.pr_posts, 0)
+
+    def test_processed_state_failure_after_retry_pr_keeps_published_effect_counted(self):
+        FakeGitHub.fail_first_pr = True
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=_generated_response()),
+        ):
+            first = publish_repositories(["alice/demo"], self.state_dir)
+        self.assertEqual(first[0]["status"], "failed")
+
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", side_effect=AssertionError("model called")),
+            patch("janitor.publisher._mark_processed", side_effect=OSError("private disk detail")),
+        ):
+            results = publish_repositories(
+                ["alice/demo", "alice/later"], self.state_dir, limit=1
+            )
+
+        self.assertEqual(results[0]["status"], "published")
+        self.assertEqual(results[0]["base"], BASE_SHA)
+        self.assertEqual(results[0]["head"], GENERATED_COMMIT_SHA)
+        self.assertEqual(results[0]["pr_url"], "https://github.com/alice/demo/pull/1")
+        self.assertEqual(results[0]["state_error"], "processed_state_update_failed")
+        self.assertEqual(results[1]["status"], "cap_deferred")
+        self.assertEqual(shared.tree_posts, 1)
+        self.assertEqual(shared.commit_posts, 1)
+        self.assertEqual(shared.ref_posts, 1)
+        self.assertEqual(shared.pr_posts, 2)
+
+    def test_receipt_append_failure_propagates_and_halts_later_repositories(self):
+        shared = FakeGitHub()
+        with (
+            patch("janitor.publisher.GitHub", return_value=shared),
+            patch("janitor.publisher.extract_structured", return_value=_generated_response()),
+            patch("janitor.publisher._append_receipt", side_effect=OSError("receipt unavailable")),
+            self.assertRaises(OSError),
+        ):
+            publish_repositories(["alice/demo", "alice/later"], self.state_dir)
+
+        self.assertEqual(shared.pr_posts, 1)
+        self.assertFalse(any("/repos/alice/later" in path for _method, path, _payload in shared.calls))
+
     def test_all_existing_janitor_blocks_are_removed_from_evidence_but_preserved(self):
         branches = (
             "<!-- janitor:begin:branches -->\n"

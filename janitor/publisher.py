@@ -153,7 +153,7 @@ def _append_receipt(state_dir: Path, result: dict) -> None:
         "head": result.get("head"),
         "pr_url": result.get("pr_url"),
     }
-    for key in ("reason", "error"):
+    for key in ("reason", "error", "state_error"):
         if result.get(key):
             receipt[key] = result[key]
     path = state_dir / PUBLICATION_RECEIPTS
@@ -221,6 +221,24 @@ def _mark_processed(
         "processed_at": _now().isoformat(),
     }
     _atomic_json(state_dir / PROCESSED_STATE, processed)
+
+
+def _published_result(
+    state_dir: Path,
+    processed: dict,
+    repo: str,
+    base: str,
+    head: str,
+    pr_url: str,
+    digest: str,
+) -> dict:
+    """Retain the remote PR effect even when local digest bookkeeping fails."""
+    result = _result(repo, "published", base=base, head=head, pr_url=pr_url)
+    try:
+        _mark_processed(state_dir, processed, repo, base, digest, "published")
+    except Exception:
+        result["state_error"] = "processed_state_update_failed"
+    return result
 
 
 def _intent_path(state_dir: Path, repo: str, base: str) -> Path:
@@ -632,8 +650,15 @@ def _publish_one(
             pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
         except Exception as exc:
             raise PublicationProgressError(exc, base=base, head=commit_sha) from exc
-        _mark_processed(state_dir, processed, full_name, base, intent["evidence_digest"], "published")
-        return _result(full_name, "published", base=base, head=commit_sha, pr_url=pull["html_url"])
+        return _published_result(
+            state_dir,
+            processed,
+            full_name,
+            base,
+            commit_sha,
+            pull["html_url"],
+            intent["evidence_digest"],
+        )
 
     base_tree, root_entries = _root_tree(github, full_name, base, deadline)
     originals: dict[str, dict[str, object]] = {}
@@ -755,8 +780,15 @@ def _publish_one(
         pull = _create_pr(github, full_name, default_branch, branch, intent, deadline)
     except Exception as exc:
         raise PublicationProgressError(exc, base=base, head=commit_sha) from exc
-    _mark_processed(state_dir, processed, full_name, base, digest, "published")
-    return _result(full_name, "published", base=base, head=commit_sha, pr_url=pull["html_url"])
+    return _published_result(
+        state_dir,
+        processed,
+        full_name,
+        base,
+        commit_sha,
+        pull["html_url"],
+        digest,
+    )
 
 
 def _safe_failure(repo: str, exc: BaseException) -> dict:

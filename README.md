@@ -143,6 +143,9 @@ janitor publish --all --dry-run
 # Publish at most 20 new documentation PRs; never merge them
 janitor publish --all --limit 20
 
+# Larger initial pass, still one proposal per overlapping documentation scope
+janitor publish --all --limit 100
+
 # Refresh the local morning packet; no model calls or GitHub mutations
 janitor reviews --all
 ```
@@ -151,8 +154,11 @@ Start the final review with [WORKER-PROMPT.md](WORKER-PROMPT.md). The latest
 packet is `~/.local/state/janitor/morning/latest.md`; timestamped snapshots retain
 the evidence from prior collection runs. Keep these artifacts local: they can
 contain private repository context. Missing or stale evidence requires a fresh
-check, not an inferred pass. The number of new PRs can be zero; 20 is a ceiling,
-not a target or promise.
+check, not an inferred pass. The number of new PRs can be zero. Scheduled runs
+default to 20 new proposals; an explicit initial pass can use up to 100, also
+the rolling-24-hour ceiling. These are safety bounds, not PR-count targets.
+A project can have several independent code PRs in the packet; related updates
+to the same generated documentation sections stay one coherent proposal.
 
 ### Branch and worktree review
 

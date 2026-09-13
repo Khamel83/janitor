@@ -18,6 +18,11 @@ The caretaker acceptance above is complete. Do not restart those historical plan
 
 ## Overnight PR workflow
 
+Use a larger initial pass, then incremental changes. PRs are concrete reviewable
+units, not a count target: keep related updates together and include multiple
+independent project PRs in the final combined review. Preserve settled reasoning
+and evidence instead of making the next agent rediscover it.
+
 - [ ] Publish bounded documentation-only PRs from published default-branch evidence, without uploading local WIP or overwriting existing PR branches.
 - [ ] Collect original context, all open PR changes, existing bot reviews, and checks into a private morning packet.
 - [ ] Preserve original goals through every layer; provide a final-agent prompt for cross-PR MERGE / RE-CHECK recommendations, never automatic merging.

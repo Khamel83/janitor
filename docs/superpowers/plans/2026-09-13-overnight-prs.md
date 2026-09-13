@@ -2,6 +2,8 @@
 
 ## Delivery status — 2026-09-13
 
+Post-implementation receipt: commit `7adce10` widened the collector-only published-document bound for a real 169,992-byte handoff. The current full suite has 222 passing tests. The installed service then completed a full packet for 66 repositories and 47 open PRs; see `HANDOFF.md` for the exact receipt.
+
 Implementation tasks below are completed historical instructions, not a queue to replay. Publisher and collector passed independent review; the final metadata-error attribution correction passed regression coverage and the full suite (221 tests). Runtime is deployed locally; publication and collection timers are enabled. Initial publication produced 42 documentation PRs including the reviewed canary, with 17 invalid synthesis outputs safely rejected and seven ineligible repositories. First fleet collection is running through the installed service. HANDOFF.md and TODO.md own current operational status; final combined reasoning remains the user's morning-agent task. Remote main stays unchanged pending implementation PR review.
 
 > **For agentic workers:** Use subagent-driven-development, test first, and execute without additional design questions. The user approved this workflow and requested implementation now.

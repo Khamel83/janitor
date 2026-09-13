@@ -24,6 +24,12 @@ class FakeGitHub:
     second_head = HEAD
     patch_value = "@@ -1 +1 @@\n-old\n+new"
     fail_repo = None
+    auth_error = False
+    status_total = 0
+    statuses = []
+    changed_files = 1
+    user_calls = 0
+    pulls_calls = []
 
     def __init__(self):
         self.pr_reads = 0
@@ -38,6 +44,12 @@ class FakeGitHub:
         cls.second_head = HEAD
         cls.patch_value = "@@ -1 +1 @@\n-old\n+new"
         cls.fail_repo = None
+        cls.auth_error = False
+        cls.status_total = 0
+        cls.statuses = []
+        cls.changed_files = 1
+        cls.user_calls = 0
+        cls.pulls_calls = []
 
     def pages(self, path, key=None):
         repo = path.split("/repos/", 1)[1].split("/", 2)[:2]
@@ -45,6 +57,7 @@ class FakeGitHub:
         if repo == self.fail_repo:
             raise GitHubError("GitHub API request failed (HTTP 503)", status=503)
         if path.endswith("/pulls?state=open"):
+            type(self).pulls_calls.append(repo)
             return [self._pr()]
         if path.endswith("/files"):
             return [
@@ -95,9 +108,20 @@ class FakeGitHub:
                     "html_url": "https://github.test/check/1",
                 }
             ]
+        if path.endswith("/status"):
+            return list(self.statuses)
         raise AssertionError(path)
 
     def api(self, path, method="GET", payload=None):
+        if path == "/user":
+            type(self).user_calls += 1
+            if self.auth_error:
+                raise GitHubError("authentication failed", status=401)
+            return {"login": "alice"}
+        if path.count("/") == 3 and path.startswith("/repos/"):
+            repo = path.removeprefix("/repos/")
+            owner = repo.split("/", 1)[0]
+            return {"full_name": repo, "owner": {"login": owner}}
         if path.endswith("/pulls/1"):
             self.pr_reads += 1
             return self._pr(self.second_head if self.pr_reads > 1 else HEAD)
@@ -117,7 +141,11 @@ class FakeGitHub:
                 "html_url": f"https://github.test/blob/{BASE}/{name}",
             }
         if path.endswith("/status"):
-            return {"state": "success", "statuses": []}
+            return {
+                "state": "success" if self.status_total else "pending",
+                "total_count": self.status_total,
+                "statuses": self.statuses[:30],
+            }
         raise AssertionError(path)
 
     @staticmethod
@@ -129,6 +157,7 @@ class FakeGitHub:
             "html_url": "https://github.test/p/1",
             "base": {"sha": BASE, "ref": "main"},
             "head": {"sha": head, "ref": "feature"},
+            "changed_files": FakeGitHub.changed_files,
         }
 
 
@@ -227,6 +256,45 @@ class ReviewCollectorTests(unittest.TestCase):
         self.assertEqual(pr["checks"]["state"], "absent")
         self.assertEqual(pr["checks"]["combined_status_state"], "absent")
 
+    def test_authenticates_once_and_skips_nonowned_repo_without_pr_collection(self):
+        report = self.collect(["alice/demo", "bob/foreign"])
+        self.assertEqual(FakeGitHub.user_calls, 1)
+        self.assertEqual(report["results"][1]["status"], "skipped")
+        self.assertEqual(report["results"][1]["reason"], "not_authenticated_owner")
+        self.assertEqual(FakeGitHub.pulls_calls, ["alice/demo"])
+        self.assertTrue(report["complete"])
+
+    def test_authentication_failure_writes_incomplete_error_packet(self):
+        FakeGitHub.auth_error = True
+        report = self.collect()
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["results"][0]["status"], "error")
+        self.assertEqual(report["results"][0]["error"], "github_http_401")
+        self.assertTrue(Path(report["artifacts"]["json"]).exists())
+        self.assertEqual(FakeGitHub.pulls_calls, [])
+
+    def test_combined_statuses_paginate_beyond_default_thirty(self):
+        FakeGitHub.statuses = [{"id": index, "state": "success"} for index in range(35)]
+        FakeGitHub.status_total = 35
+        report = self.collect()
+        pr = self.pr(report)
+        self.assertEqual(len(pr["checks"]["statuses"]), 35)
+        self.assertTrue(pr["evidence"]["status_complete"])
+        self.assertTrue(report["complete"])
+
+    def test_status_count_mismatch_is_incomplete(self):
+        FakeGitHub.statuses = [{"id": index, "state": "success"} for index in range(34)]
+        FakeGitHub.status_total = 35
+        report = self.collect()
+        self.assertFalse(report["complete"])
+        self.assertFalse(self.pr(report)["evidence"]["status_complete"])
+
+    def test_changed_file_count_mismatch_is_incomplete(self):
+        FakeGitHub.changed_files = 2
+        report = self.collect()
+        self.assertFalse(report["complete"])
+        self.assertFalse(self.pr(report)["evidence"]["files_complete"])
+
     def test_head_movement_and_missing_patch_make_collection_incomplete(self):
         FakeGitHub.second_head = "d" * 40
         FakeGitHub.patch_value = None
@@ -296,6 +364,16 @@ class ReviewCollectorTests(unittest.TestCase):
             json.loads((self.state / "morning/latest.json").read_text())["snapshot"],
             report["artifacts"]["directory"],
         )
+        latest = (self.state / "morning/latest.md").read_text()
+        report_markdown = Path(report["artifacts"]["markdown"]).read_text()
+        for label, key in (
+            ("Timestamped report", "markdown"),
+            ("JSON", "json"),
+            ("Final review prompt", "prompt"),
+        ):
+            expected = f"[{label}]({report['artifacts'][key]})"
+            self.assertIn(expected, latest)
+            self.assertIn(expected, report_markdown)
 
     def test_pagination_failure_is_visible(self):
         def pages(client, path, key=None):

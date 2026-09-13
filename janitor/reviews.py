@@ -174,7 +174,7 @@ def _review_summary(reviews: list[dict], head: str) -> dict:
     }
 
 
-def _checks(check_runs: list[dict], combined: object) -> dict:
+def _checks(check_runs: list[dict], combined: object, statuses: list[dict]) -> dict:
     if not check_runs:
         run_state = "absent"
     elif any(run.get("status") != "completed" for run in check_runs):
@@ -193,6 +193,12 @@ def _checks(check_runs: list[dict], combined: object) -> dict:
         and not combined.get("statuses")
     ):
         combined_state = None
+    total_count = combined.get("total_count") if isinstance(combined, dict) else None
+    status_complete = (
+        isinstance(total_count, int)
+        and total_count >= 0
+        and total_count == len(statuses)
+    )
     if run_state == "failed" or combined_state in {"failure", "error"}:
         state = "failed"
     elif run_state == "pending" or combined_state == "pending":
@@ -208,7 +214,8 @@ def _checks(check_runs: list[dict], combined: object) -> dict:
         "check_runs_state": run_state,
         "combined_status_state": combined_state or "absent",
         "check_runs": check_runs,
-        "statuses": combined.get("statuses", []) if isinstance(combined, dict) else [],
+        "statuses": statuses,
+        "status_complete": status_complete,
     }
 
 
@@ -258,13 +265,24 @@ def _collect_pr(github: GitHub, repo: str, listed: dict, state_dir: Path) -> dic
         f"/repos/{repo}/commits/{head}/check-runs", key="check_runs"
     )
     combined = github.api(f"/repos/{repo}/commits/{head}/status", "GET")
+    statuses = github.pages(f"/repos/{repo}/commits/{head}/status", key="statuses")
     documents = {name: _document(github, repo, name, base) for name in DOCUMENTS}
     refreshed = github.api(f"/repos/{repo}/pulls/{number}", "GET")
     refreshed_head = refreshed.get("head", {}).get("sha")
     head_changed = refreshed_head != head
-    diff_complete = all(isinstance(item.get("patch"), str) for item in files)
+    changed_files = current.get("changed_files")
+    files_complete = (
+        isinstance(changed_files, int)
+        and changed_files >= 0
+        and changed_files == len(files)
+    )
+    diff_complete = files_complete and all(
+        isinstance(item.get("patch"), str) for item in files
+    )
+    checks = _checks(check_runs, combined, statuses)
     complete = (
         diff_complete
+        and checks["status_complete"]
         and not head_changed
         and all(doc["complete"] for doc in documents.values())
     )
@@ -286,18 +304,27 @@ def _collect_pr(github: GitHub, repo: str, listed: dict, state_dir: Path) -> dic
         "inline_review_comments": inline_comments,
         "original_documents": documents,
         "review": summary,
-        "checks": _checks(check_runs, combined),
-        "evidence": {"complete": complete, "diff_complete": diff_complete},
+        "checks": checks,
+        "evidence": {
+            "complete": complete,
+            "diff_complete": diff_complete,
+            "files_complete": files_complete,
+            "status_complete": checks["status_complete"],
+        },
         "publication": _publication_refs(state_dir, repo),
     }
 
 
-def _render_markdown(timestamp: str, results: list[dict], complete: bool) -> str:
+def _render_markdown(
+    timestamp: str, results: list[dict], complete: bool, artifacts: dict[str, str]
+) -> str:
     lines = [
         "# Janitor morning PR evidence",
         "",
         f"Source timestamp: {timestamp}",
         f"Collection complete: {'yes' if complete else 'no'}",
+        "",
+        f"[Timestamped report]({artifacts['markdown']}) | [JSON]({artifacts['json']}) | [Final review prompt]({artifacts['prompt']})",
         "",
     ]
     categories = (
@@ -381,16 +408,60 @@ def collect_reviews(repos: list[str], state_dir: Path) -> dict:
     timestamp = datetime.now(timezone.utc).isoformat()
     github = GitHub()
     results = []
-    for repo in unique:
+    try:
+        user = github.api("/user", "GET")
+        login = user.get("login") if isinstance(user, dict) else None
+        if not isinstance(login, str) or not login:
+            raise ValueError("invalid_authenticated_user")
+        auth_error = None
+    except Exception as exc:
+        login = None
+        auth_error = _safe_error(exc)
+    for requested_repo in unique:
+        if auth_error:
+            results.append(
+                {
+                    "repo": requested_repo,
+                    "status": "error",
+                    "error": auth_error,
+                    "pull_requests": [],
+                    "publication": _publication_refs(state_dir, requested_repo),
+                }
+            )
+            continue
         try:
+            metadata = github.api(f"/repos/{requested_repo}", "GET")
+            owner = metadata.get("owner") if isinstance(metadata, dict) else None
+            canonical = (
+                metadata.get("full_name") if isinstance(metadata, dict) else None
+            )
+            owner_login = owner.get("login") if isinstance(owner, dict) else None
+            if not isinstance(canonical, str) or not isinstance(owner_login, str):
+                raise ValueError("invalid_repository_metadata")
+            canonical_owner = canonical.split("/", 1)[0]
+            if (
+                owner_login.casefold() != login.casefold()
+                or canonical_owner.casefold() != login.casefold()
+            ):
+                results.append(
+                    {
+                        "repo": canonical,
+                        "status": "skipped",
+                        "reason": "not_authenticated_owner",
+                        "pull_requests": [],
+                        "publication": _publication_refs(state_dir, canonical),
+                    }
+                )
+                continue
+            repo = canonical
             pulls = github.pages(f"/repos/{repo}/pulls?state=open")
             prs = [_collect_pr(github, repo, pull, state_dir) for pull in pulls]
             results.append(
                 {
-                    "repo": repo,
+                    "repo": requested_repo,
                     "status": "ok",
                     "pull_requests": prs,
-                    "publication": _publication_refs(state_dir, repo),
+                    "publication": _publication_refs(state_dir, requested_repo),
                 }
             )
         except Exception as exc:
@@ -404,7 +475,7 @@ def collect_reviews(repos: list[str], state_dir: Path) -> dict:
                 }
             )
     complete = all(
-        result["status"] == "ok"
+        result["status"] in {"ok", "skipped"}
         and all(pr["evidence"]["complete"] for pr in result["pull_requests"])
         for result in results
     )
@@ -418,7 +489,7 @@ def collect_reviews(repos: list[str], state_dir: Path) -> dict:
         "markdown": str(snapshot / "report.md"),
         "prompt": str(snapshot / "FINAL-REVIEW-PROMPT.md"),
     }
-    markdown = _render_markdown(timestamp, results, complete)
+    markdown = _render_markdown(timestamp, results, complete, artifacts)
     report = {
         "schema_version": 1,
         "source_timestamp": timestamp,
